@@ -1,58 +1,6 @@
-#[inline(always)]
-fn mult_64(i: usize) -> usize {
-    i << 6
-}
-
-#[inline(always)]
-fn div_64(i: usize) -> usize {
-    i >> 6
-}
-
-#[inline(always)]
-fn mod_64(i: usize) -> usize {
-    i & 63
-}
-
-fn ceil_div_64(i: usize) -> usize {
-    div_64(i) + (if mod_64(i) > 0 { 1 } else { 0 })
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Bits64(u64);
-
-impl Bits64 {
-    pub const ZEROS: Self = Bits64(0);
-
-    fn index_check(idx: usize) {
-        if idx >= 64 {
-            panic!("Index out of range");
-        }
-    }
-
-    pub fn get(self, idx: usize) -> bool {
-        Self::index_check(idx);
-        ((self.0 >> idx) & 1) > 0
-    }
-
-    pub fn set(&mut self, idx: usize, to: bool) {
-        Self::index_check(idx);
-        let mask = 1 << idx;
-        let res = if to { self.0 | mask } else { self.0 & (!mask) };
-        self.0 = res
-    }
-}
-
-impl From<u64> for Bits64 {
-    fn from(i: u64) -> Self {
-        Bits64(i)
-    }
-}
-
-impl From<Bits64> for u64 {
-    fn from(i: Bits64) -> Self {
-        i.0
-    }
-}
+use super::{mult_64, div_64, mod_64, ceil_div_64};
+use indexable::IndexableData;
+use bits64::*;
 
 pub struct BitVec64 {
     data: Vec<Bits64>,
@@ -126,24 +74,38 @@ impl BitVec64 {
     }
 }
 
-use byteorder::{ReadBytesExt, WriteBytesExt, NetworkEndian};
+impl IndexableData for BitVec64 {
+    fn len_bits(&self) -> usize {
+        self.len()
+    }
+
+    fn get_word(&self, i: usize) -> Bits64 {
+        self.data[i]
+    }
+}
+
+use byteorder::{ReadBytesExt, WriteBytesExt, ByteOrder, BigEndian, NativeEndian};
 use std::io;
 use std::io::{Read, Write};
 
 impl Bits64 {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        BigEndian::read_u64(bytes).into()
+    }
+
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let res = reader.read_u64::<NetworkEndian>()?;
-        Ok(Bits64(res))
+        let res = reader.read_u64::<BigEndian>()?;
+        Ok(res.into())
     }
 
     pub fn write_to<W: Write>(self, writer: &mut W) -> io::Result<()> {
-        writer.write_u64::<NetworkEndian>(self.0)
+        writer.write_u64::<BigEndian>(self.into())
     }
 }
 
 impl BitVec64 {
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let used_bits = reader.read_u64::<NetworkEndian>()?;
+        let used_bits = reader.read_u64::<BigEndian>()?;
         let max_size: usize = !0;
         let max_size: u64 = max_size as u64;
         if used_bits > max_size {
@@ -161,14 +123,104 @@ impl BitVec64 {
         Ok(BitVec64 { data, used_bits })
     }
 
-    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        writer.write_u64::<NetworkEndian>(self.used_bits as u64)?;
+    fn write_data_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         for bits in self.data.iter() {
             bits.write_to(writer)?;
         }
         Ok(())
     }
+
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        writer.write_u64::<BigEndian>(self.used_bits as u64)?;
+        self.write_data_to(writer)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut res = Vec::with_capacity(8 * self.data.len());
+        self.write_data_to(&mut res).unwrap();
+        res
+    }
 }
+
+/// Use the bytes of a serialised BitVec64 directly
+/// as a read-only vector without copying them.
+pub struct SerialisedBitVec64<'a> {
+    data: &'a [u8],
+    used_bits: usize,
+}
+
+impl<'a> SerialisedBitVec64<'a> {
+    /// Create a bit vector backed by a bytes slice.
+    /// This will return `None` if there are not enough
+    /// bytes for the recorded size, or if the recorded
+    /// size is too big to represent as a usize
+    /// (which can only happen if usize is 32bits).
+    /// Otherwise it will also return the number of bytes
+    /// used by the bit vector - data after this in the
+    /// original slice is not part of the bit vector.
+    pub fn of_bytes(data: &'a [u8]) -> Option<(Self, usize)> {
+        if data.len() < 8 {
+            return None;
+        };
+        let used_bits = BigEndian::read_u64(data);
+        let max_size: usize = !0;
+        let max_size: u64 = max_size as u64;
+        if used_bits > max_size {
+            return None;
+        };
+        let used_bits: usize = used_bits as usize;
+        let units = ceil_div_64(used_bits);
+        let data_len = 8 + units * 8;
+        if data.len() < data_len {
+            return None;
+        };
+        let res = SerialisedBitVec64 {
+            data: &data[8..data_len],
+            used_bits,
+        };
+        Some((res, data_len))
+    }
+
+    pub fn len(&self) -> usize {
+        self.used_bits
+    }
+
+    pub fn get(&self, idx: usize) -> bool {
+        if idx >= self.used_bits {
+            panic!("Index out of range")
+        }
+        let word_idx = div_64(idx);
+        self.get_word(word_idx).get(mod_64(idx))
+    }
+}
+
+impl<'a> IndexableData for SerialisedBitVec64<'a> {
+    fn len_bits(&self) -> usize {
+        self.len()
+    }
+
+    fn get_word(&self, i: usize) -> Bits64 {
+        let byte_idx = i << 3;
+        let end_idx = byte_idx + 8;
+        if end_idx > self.data.len() {
+            panic!("Index out of range")
+        }
+        Bits64::from_bytes(&self.data[byte_idx..end_idx])
+    }
+
+    fn count_ones_word(&self, i: usize) -> u32 {
+        let byte_idx = i << 3;
+        let end_idx = byte_idx + 8;
+        if end_idx > self.data.len() {
+            panic!("Index out of range")
+        }
+        // We're only counting set bits, so the
+        // byte order doesn't matter
+        NativeEndian::read_u64(&self.data[byte_idx..end_idx]).count_ones()
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests {
