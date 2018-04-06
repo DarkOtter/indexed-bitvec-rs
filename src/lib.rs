@@ -1,5 +1,8 @@
 extern crate byteorder;
 
+#[cfg(test)]
+extern crate quickcheck;
+
 #[inline(always)]
 pub(crate) fn mult_64(i: usize) -> usize {
     i << 6

@@ -6,6 +6,9 @@ authors = ["DarkOtter <>"]
 [dependencies]
 byteorder = "1"
 
+[dev-dependencies]
+quickcheck = "0.6"
+
 [profile.release]
 panic = "abort"
 lto = true
