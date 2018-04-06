@@ -2,6 +2,7 @@ use super::{mult_64, div_64, mod_64, ceil_div_64};
 use indexable::IndexableData;
 use bits64::*;
 
+#[derive(Clone, Debug)]
 pub struct BitVec64 {
     data: Vec<Bits64>,
     used_bits: usize,
@@ -144,6 +145,7 @@ impl BitVec64 {
 
 /// Use the bytes of a serialised BitVec64 directly
 /// as a read-only vector without copying them.
+#[derive(Clone, Debug)]
 pub struct SerialisedBitVec64<'a> {
     data: &'a [u8],
     used_bits: usize,
@@ -224,8 +226,48 @@ impl<'a> IndexableData for SerialisedBitVec64<'a> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    use super::*;
+    use quickcheck;
+    use quickcheck::Arbitrary;
+
+    impl Arbitrary for BitVec64 {
+        fn arbitrary<G: quickcheck::Gen>(gen: &mut G) -> Self {
+            let data = <Vec<Bits64> as Arbitrary>::arbitrary(gen);
+            if data.len() == 0 {
+                return BitVec64 { data, used_bits: 0 };
+            }
+            let unused = gen.gen_range(0, 64);
+            let used_bits = data.len() * 64 - unused;
+            BitVec64 { data, used_bits }
+        }
+    }
+
+    quickcheck! {
+        fn write_then_read(data: BitVec64) -> () {
+            let mut buffer = io::Cursor::new(Vec::with_capacity(data.approx_size_bytes()));
+            data.write_to(&mut buffer).unwrap();
+            let mut buffer = io::Cursor::new(buffer.into_inner());
+            let read_back = BitVec64::read_from(&mut buffer).unwrap();
+            assert_eq!(data.len_bits(), read_back.len_bits());
+            assert_eq!(data.len_words(), read_back.len_words());
+            for i in 0..data.len_words() {
+                assert_eq!(data.get_word(i), read_back.get_word(i));
+                assert_eq!(data.count_ones_word(i), read_back.count_ones_word(i));
+            }
+        }
+
+        fn write_then_use(data: BitVec64) -> () {
+            let mut buffer = io::Cursor::new(Vec::with_capacity(data.approx_size_bytes()));
+            data.write_to(&mut buffer).unwrap();
+            let buffer = buffer.into_inner();
+            let (reading_back, read_bytes) = SerialisedBitVec64::of_bytes(buffer.as_slice()).unwrap();
+            assert_eq!(read_bytes, buffer.len());
+            assert_eq!(data.len_bits(), reading_back.len_bits());
+            assert_eq!(data.len_words(), reading_back.len_words());
+            for i in 0..data.len_words() {
+                assert_eq!(data.get_word(i), reading_back.get_word(i));
+                assert_eq!(data.count_ones_word(i), reading_back.count_ones_word(i));
+            }
+        }
     }
 }
