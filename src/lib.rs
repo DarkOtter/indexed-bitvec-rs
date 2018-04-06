@@ -1,6 +1,7 @@
 extern crate byteorder;
 
 #[cfg(test)]
+#[macro_use]
 extern crate quickcheck;
 
 #[inline(always)]
