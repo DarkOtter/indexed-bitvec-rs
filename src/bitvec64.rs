@@ -1,5 +1,5 @@
 use super::{mult_64, div_64, mod_64, ceil_div_64};
-use indexable::IndexableData;
+use words::{WordData, WordDataSlice, BitData};
 use bits64::*;
 
 #[derive(Clone, Debug)]
@@ -65,35 +65,116 @@ impl BitVec64 {
     pub fn len(&self) -> usize {
         self.used_bits
     }
+}
 
-    pub fn data<'a>(&'a self) -> &'a [Bits64] {
-        self.data.as_slice()
+impl WordData for BitVec64 {
+    fn len_words(&self) -> usize {
+        self.data.len()
     }
 
-    pub fn data_mut<'a>(&'a mut self) -> &'a mut [Bits64] {
-        self.data.as_mut_slice()
+    fn get_word(&self, idx: usize) -> u64 {
+        self.data[idx].into()
     }
 }
 
-impl IndexableData for BitVec64 {
+impl BitData for BitVec64 {
     fn len_bits(&self) -> usize {
         self.len()
     }
+}
 
-    fn get_word(&self, i: usize) -> Bits64 {
-        self.data[i]
+/// Use the bytes of a serialised BitVec64 directly
+/// as a read-only vector without copying them.
+#[derive(Clone, Debug)]
+pub struct SerialisedBitVec<T: WordData> {
+    data: T,
+    used_bits: usize,
+}
+
+impl<T: WordData> SerialisedBitVec<T> {
+    /// Create a bit vector backed by any existing indexable words.
+    /// This will return `None` if there are not enough
+    /// words for the recorded size, or if the recorded
+    /// size is too big to represent as a usize
+    /// (which can only happen if usize is 32bits).
+    /// Otherwise it will also return the number of words
+    /// used by the bit vector - data after this in the
+    /// original slice is not part of the bit vector.
+    pub fn of_words(data: T) -> Option<(Self, usize)> {
+        if data.len_words() < 1 {
+            return None;
+        };
+        let used_bits = data.get_word(0);
+        let max_size: usize = !0;
+        let max_size: u64 = max_size as u64;
+        if used_bits > max_size {
+            return None;
+        };
+        let used_bits: usize = used_bits as usize;
+        let words = ceil_div_64(used_bits);
+        let used_words = words + 1;
+        if data.len_words() < used_words {
+            return None;
+        };
+        let res = SerialisedBitVec { data, used_bits };
+        Some((res, used_words))
     }
 }
 
-use byteorder::{ReadBytesExt, WriteBytesExt, ByteOrder, BigEndian, NativeEndian};
+impl<T: WordData> WordData for SerialisedBitVec<T> {
+    fn len_words(&self) -> usize {
+        ceil_div_64(self.len_bits())
+    }
+
+    fn get_word(&self, idx: usize) -> u64 {
+        self.data.get_word(idx + 1)
+    }
+
+    fn count_ones_word(&self, idx: usize) -> u32 {
+        self.data.count_ones_word(idx + 1)
+    }
+}
+
+impl<T: WordData> BitData for SerialisedBitVec<T> {
+    fn len_bits(&self) -> usize {
+        self.used_bits
+    }
+
+    fn get_bit(&self, idx: usize) -> bool {
+        if idx >= self.used_bits {
+            panic!("Index out of range")
+        }
+        Bits64::from(self.data.get_word(div_64(idx))).get(mod_64(idx))
+    }
+}
+
+impl<T: WordDataSlice> WordDataSlice for SerialisedBitVec<T> {
+    fn slice_from_word(&self, idx: usize) -> Self {
+        if idx >= self.len_words() {
+            panic!("Index out of range");
+        }
+        SerialisedBitVec {
+            data: self.data.slice_from_word(idx),
+            used_bits: self.used_bits - mult_64(idx),
+        }
+    }
+}
+
+impl<T: WordData> SerialisedBitVec<T> {
+    pub fn len(&self) -> usize {
+        <Self as BitData>::len_bits(self)
+    }
+
+    pub fn get(&self, idx: usize) -> bool {
+        <Self as BitData>::get_bit(self, idx)
+    }
+}
+
+use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 use std::io;
 use std::io::{Read, Write};
 
 impl Bits64 {
-    fn from_bytes(bytes: &[u8]) -> Self {
-        BigEndian::read_u64(bytes).into()
-    }
-
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         let res = reader.read_u64::<BigEndian>()?;
         Ok(res.into())
@@ -143,87 +224,6 @@ impl BitVec64 {
     }
 }
 
-/// Use the bytes of a serialised BitVec64 directly
-/// as a read-only vector without copying them.
-#[derive(Clone, Debug)]
-pub struct SerialisedBitVec64<'a> {
-    data: &'a [u8],
-    used_bits: usize,
-}
-
-impl<'a> SerialisedBitVec64<'a> {
-    /// Create a bit vector backed by a bytes slice.
-    /// This will return `None` if there are not enough
-    /// bytes for the recorded size, or if the recorded
-    /// size is too big to represent as a usize
-    /// (which can only happen if usize is 32bits).
-    /// Otherwise it will also return the number of bytes
-    /// used by the bit vector - data after this in the
-    /// original slice is not part of the bit vector.
-    pub fn of_bytes(data: &'a [u8]) -> Option<(Self, usize)> {
-        if data.len() < 8 {
-            return None;
-        };
-        let used_bits = BigEndian::read_u64(data);
-        let max_size: usize = !0;
-        let max_size: u64 = max_size as u64;
-        if used_bits > max_size {
-            return None;
-        };
-        let used_bits: usize = used_bits as usize;
-        let units = ceil_div_64(used_bits);
-        let data_len = 8 + units * 8;
-        if data.len() < data_len {
-            return None;
-        };
-        let res = SerialisedBitVec64 {
-            data: &data[8..data_len],
-            used_bits,
-        };
-        Some((res, data_len))
-    }
-
-    pub fn len(&self) -> usize {
-        self.used_bits
-    }
-
-    pub fn get(&self, idx: usize) -> bool {
-        if idx >= self.used_bits {
-            panic!("Index out of range")
-        }
-        let word_idx = div_64(idx);
-        self.get_word(word_idx).get(mod_64(idx))
-    }
-}
-
-impl<'a> IndexableData for SerialisedBitVec64<'a> {
-    fn len_bits(&self) -> usize {
-        self.len()
-    }
-
-    fn get_word(&self, i: usize) -> Bits64 {
-        let byte_idx = i << 3;
-        let end_idx = byte_idx + 8;
-        if end_idx > self.data.len() {
-            panic!("Index out of range")
-        }
-        Bits64::from_bytes(&self.data[byte_idx..end_idx])
-    }
-
-    fn count_ones_word(&self, i: usize) -> u32 {
-        let byte_idx = i << 3;
-        let end_idx = byte_idx + 8;
-        if end_idx > self.data.len() {
-            panic!("Index out of range")
-        }
-        // We're only counting set bits, so the
-        // byte order doesn't matter
-        NativeEndian::read_u64(&self.data[byte_idx..end_idx]).count_ones()
-    }
-}
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +248,7 @@ mod tests {
             data.write_to(&mut buffer).unwrap();
             let mut buffer = io::Cursor::new(buffer.into_inner());
             let read_back = BitVec64::read_from(&mut buffer).unwrap();
+            assert_eq!(data.len(), read_back.len());
             assert_eq!(data.len_bits(), read_back.len_bits());
             assert_eq!(data.len_words(), read_back.len_words());
             for i in 0..data.len_words() {
@@ -257,16 +258,46 @@ mod tests {
         }
 
         fn write_then_use(data: BitVec64) -> () {
-            let mut buffer = io::Cursor::new(Vec::with_capacity(data.approx_size_bytes()));
+            let mut buffer = io::Cursor::new(Vec::new());
             data.write_to(&mut buffer).unwrap();
             let buffer = buffer.into_inner();
-            let (reading_back, read_bytes) = SerialisedBitVec64::of_bytes(buffer.as_slice()).unwrap();
-            assert_eq!(read_bytes, buffer.len());
+            let (reading_back, read_words) =
+                SerialisedBitVec::of_words(buffer.as_slice()).unwrap();
+            assert_eq!(read_words, buffer.len_words());
+            assert_eq!(data.len(), reading_back.len());
             assert_eq!(data.len_bits(), reading_back.len_bits());
             assert_eq!(data.len_words(), reading_back.len_words());
             for i in 0..data.len_words() {
                 assert_eq!(data.get_word(i), reading_back.get_word(i));
                 assert_eq!(data.count_ones_word(i), reading_back.count_ones_word(i));
+            }
+        }
+
+        fn write_both_then_use(data_l: BitVec64, data_r: BitVec64) -> () {
+            let mut buffer = io::Cursor::new(Vec::new());
+            data_l.write_to(&mut buffer).unwrap();
+            data_r.write_to(&mut buffer).unwrap();
+            let buffer = buffer.into_inner();
+            let buffer = buffer.as_slice();
+            let (read_l, skip_words) =
+                SerialisedBitVec::of_words(buffer).unwrap();
+            let (read_r, _) =
+                SerialisedBitVec::of_words(buffer.slice_from_word(skip_words)).unwrap();
+            assert_eq!(data_l.len(), read_l.len());
+            assert_eq!(data_r.len(), read_r.len());
+            assert_eq!(data_l.len_bits(), read_l.len_bits());
+            assert_eq!(data_r.len_bits(), read_r.len_bits());
+            assert_eq!(data_l.len_words(), read_l.len_words());
+            assert_eq!(data_r.len_words(), read_r.len_words());
+
+            for i in 0..data_l.len_words() {
+                assert_eq!(data_l.get_word(i), read_l.get_word(i));
+                assert_eq!(data_l.count_ones_word(i), read_l.count_ones_word(i));
+            }
+
+            for i in 0..data_r.len_words() {
+                assert_eq!(data_r.get_word(i), read_r.get_word(i));
+                assert_eq!(data_r.count_ones_word(i), read_r.count_ones_word(i));
             }
         }
     }
