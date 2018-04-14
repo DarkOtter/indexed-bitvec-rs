@@ -65,6 +65,30 @@ impl BitVec64 {
     pub fn len(&self) -> usize {
         self.used_bits
     }
+
+    /// Directly access the data storage of the bit vector.
+    /// Bear in mind some of the bits of the last word may
+    /// not be in use.
+    pub fn data(&self) -> &[Bits64] {
+        self.data.as_slice()
+    }
+
+    /// Directly access the data storage of the bit vector.
+    /// Bear in mind some of the bits of the last word may
+    /// not be in use, and even if you set them they will
+    /// be ignored.
+    pub fn data_mut(&mut self) -> &mut [Bits64] {
+        self.data.as_mut_slice()
+    }
+
+    /// Construct directly from underlying data - all bits
+    /// in the input will be used.
+    pub fn from_data(data: Vec<Bits64>) -> Self {
+        BitVec64 {
+            used_bits: mult_64(data.len()),
+            data,
+        }
+    }
 }
 
 impl WordData for BitVec64 {
@@ -80,6 +104,35 @@ impl WordData for BitVec64 {
 impl BitData for BitVec64 {
     fn len_bits(&self) -> usize {
         self.len()
+    }
+}
+
+impl<'a> WordData for &'a BitVec64 {
+    #[inline]
+    fn len_words(&self) -> usize {
+        (*self).len_words()
+    }
+
+    #[inline]
+    fn get_word(&self, idx: usize) -> u64 {
+        (*self).get_word(idx)
+    }
+
+    #[inline]
+    fn count_ones_word(&self, idx: usize) -> u32 {
+        (*self).count_ones_word(idx)
+    }
+}
+
+impl<'a> BitData for &'a BitVec64 {
+    #[inline]
+    fn len_bits(&self) -> usize {
+        (*self).len_bits()
+    }
+
+    #[inline]
+    fn get_bit(&self, idx: usize) -> bool {
+        (*self).get_bit(idx)
     }
 }
 
