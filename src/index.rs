@@ -1,4 +1,4 @@
-use super::{mult_64, div_64, mod_64};
+use super::{mult_64, div_64, mod_64, ceil_div_64};
 use words::{WordData, BitData};
 use bits64::Bits64;
 use bitvec64::BitVec64;
@@ -8,38 +8,39 @@ fn ceil_div(n: usize, d: usize) -> usize {
     (n / d) + if n % d > 0 { 1 } else { 0 }
 }
 
-const WORD_BITS: usize = 64;
-const BITS_PER_L0_BLOCK: usize = 1 << 32;
+mod size {
+    use super::ceil_div;
 
-fn l0_size(total_bits: usize) -> usize {
-    if total_bits <= BITS_PER_L0_BLOCK {
-        0
-    } else {
-        (total_bits - 1) >> 32
+    pub const BITS_PER_L0_BLOCK: usize = 1 << 32;
+    pub const BITS_PER_BLOCK: usize = 512;
+
+    pub fn l0(total_bits: usize) -> usize {
+        if total_bits <= BITS_PER_L0_BLOCK {
+            0
+        } else {
+            (total_bits - 1) >> 32
+        }
     }
-}
 
-const BITS_PER_BLOCK: usize = 512;
-const WORDS_PER_BLOCK: usize = 512 / WORD_BITS;
-
-fn n_blocks(total_bits: usize) -> usize {
-    if total_bits == 0 {
-        0
-    } else {
-        ((total_bits - 1) >> 9) + 1
+    pub fn blocks(total_bits: usize) -> usize {
+        if total_bits == 0 {
+            0
+        } else {
+            ((total_bits - 1) >> 9) + 1
+        }
     }
-}
 
-fn l1l2_size(total_bits: usize) -> usize {
-    if total_bits < 512 {
-        0
-    } else {
-        ceil_div(n_blocks(total_bits), 1 << 2)
+    pub fn l1l2(total_bits: usize) -> usize {
+        if total_bits < 512 {
+            0
+        } else {
+            ceil_div(blocks(total_bits), 1 << 2)
+        }
     }
-}
 
-fn rank_index_size_words(total_bits: usize) -> usize {
-    l0_size(total_bits) + l1l2_size(total_bits)
+    pub fn rank_index(total_bits: usize) -> usize {
+        l0(total_bits) + l1l2(total_bits)
+    }
 }
 
 fn read_l1l2<I: WordData>(index: &I, l0_size: usize, block_idx: usize) -> u32 {
@@ -77,7 +78,7 @@ where
     D: WordData,
 {
     let total_words = data.len_words();
-    let l0_size = l0_size(total_words);
+    let l0_size = size::l0(total_words);
 
     let block_index = idx_bits >> 9;
 
@@ -108,12 +109,25 @@ where
     l0_count as usize + (l1l2_count + subword_count + whole_words_count) as usize
 }
 
+fn check_index_size<I, D>(index: &I, data: &D)
+where
+    I: WordData,
+    D: BitData,
+{
+    let expected_size = size::rank_index(data.len_bits());
+    if expected_size != index.len_words() {
+        panic!("Index length mismatches data");
+    }
+}
+
 #[inline]
 fn rank<I, D>(index: &I, data: &D, idx_bits: usize) -> usize
 where
     I: WordData,
     D: BitData,
 {
+    check_index_size(index, data);
+
     if idx_bits >= data.len_bits() {
         panic!("Index out of bounds");
     }
@@ -135,6 +149,8 @@ where
     I: WordData,
     D: BitData,
 {
+    check_index_size(index, data);
+
     let last_idx = if data.len_bits() == 0 {
         return 0;
     } else {
@@ -156,6 +172,15 @@ where
         unsafe_rank(index, data, last_word_start)
     };
     pre_rank + count_in_last_word as usize
+}
+
+#[inline]
+fn count_zeros<I, D>(index: &I, data: &D) -> usize
+where
+    I: WordData,
+    D: BitData,
+{
+    data.len_bits() - count_ones(index, data)
 }
 
 pub struct RankIndex(BitVec64);
@@ -198,7 +223,7 @@ impl<'a, D: BitData + 'a> Iterator for WordPopcountIter<'a, D> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = ceil_div(self.data.len_bits(), WORD_BITS).saturating_sub(self.idx);
+        let remaining = ceil_div_64(self.data.len_bits()).saturating_sub(self.idx);
         (remaining, Some(remaining))
     }
 }
@@ -255,15 +280,15 @@ impl RankIndex {
     pub fn index<D: BitData>(data: &D) -> Self {
         let total_bits = data.len_bits();
         if total_bits < 512 {
-            debug_assert!(l0_size(total_bits) == 0);
-            debug_assert!(l1l2_size(total_bits) == 0);
+            debug_assert!(size::l0(total_bits) == 0);
+            debug_assert!(size::l1l2(total_bits) == 0);
             return RankIndex(BitVec64::from_data(Vec::with_capacity(0)));
         }
 
         let block_popcounts: Vec<u32> = BlockPopcountIter::from(data).collect();
 
-        let l0_size = l0_size(total_bits);
-        let l1l2_size = l1l2_size(total_bits);
+        let l0_size = size::l0(total_bits);
+        let l1l2_size = size::l1l2(total_bits);
 
         debug_assert!(l1l2_size == ceil_div(block_popcounts.len(), 4));
 
@@ -275,7 +300,8 @@ impl RankIndex {
 
         let mut l0_rank = 0u64;
         for l0_chunk in block_popcounts.as_slice().chunks(
-            BITS_PER_L0_BLOCK / BITS_PER_BLOCK,
+            size::BITS_PER_L0_BLOCK /
+                size::BITS_PER_BLOCK,
         )
         {
             if l0_idx > 0 {
@@ -316,17 +342,23 @@ impl RankIndex {
     }
 
     #[inline]
-    fn size_check<D: BitData>(&self, data: &D) {
-        let expected_size = l0_size(data.len_bits()) + l1l2_size(data.len_bits());
-        if expected_size != self.0.data().len() {
-            panic!("Index length mismatches data");
-        }
+    pub fn rank<D: BitData>(&self, data: &D, idx_bits: usize) -> usize {
+        rank(&self.0, data, idx_bits)
     }
 
     #[inline]
-    pub fn rank<D: BitData>(&self, data: &D, idx_bits: usize) -> usize {
-        self.size_check(data);
-        rank(&self.0, data, idx_bits)
+    pub fn rank_zeros<D: BitData>(&self, data: &D, idx_bits: usize) -> usize {
+        rank_zeros(&self.0, data, idx_bits)
+    }
+
+    #[inline]
+    pub fn count_ones<D: BitData>(&self, data: &D) -> usize {
+        count_ones(&self.0, data)
+    }
+
+    #[inline]
+    pub fn count_zeros<D: BitData>(&self, data: &D) -> usize {
+        count_zeros(&self.0, data)
     }
 }
 
@@ -335,14 +367,19 @@ mod tests {
     use super::*;
 
     quickcheck! {
-        fn test_rank(x: BitVec64) -> () {
+        fn test_rank_and_count_fns(x: BitVec64) -> () {
+            // TODO: Test rank_zero
             let index = RankIndex::index(&x);
 
             let mut manual_rank = 0;
             for idx in 0..x.len_bits() {
                 assert_eq!(index.rank(&x, idx), manual_rank);
+                assert_eq!(index.rank_zeros(&x, idx), idx - manual_rank);
                 if x.get_bit(idx) { manual_rank += 1 }
             }
+
+            assert_eq!(index.count_ones(&x), manual_rank);
+            assert_eq!(index.count_zeros(&x), x.len_bits() - manual_rank);
         }
     }
 }
