@@ -278,6 +278,8 @@ fn pack_l1l2(counts: [u32; 4]) -> Bits64 {
 
 impl RankIndex {
     pub fn index<D: BitData>(data: &D) -> Self {
+        // TODO: Add total set count to end of L0 index
+        // TODO: Build without using extra space
         let total_bits = data.len_bits();
         if total_bits < 512 {
             debug_assert!(size::l0(total_bits) == 0);
@@ -310,25 +312,29 @@ impl RankIndex {
             l0_idx += 1;
 
             let mut lower_rank = 0u32;
-            for l1l2_chunk in l0_chunk.chunks(4) {
+            let (whole_chunks, partial_l1l2_chunk) = l0_chunk.split_at(l0_chunk.len() & !3);
+
+            for l1l2_chunk in whole_chunks.chunks(4) {
                 let mut ranks = [lower_rank; 4];
-                if l1l2_chunk.len() < 4 {
-                    // Slow path
-                    for (i, c) in l1l2_chunk.iter().cloned().enumerate() {
-                        ranks[i + 1] = ranks[i] + c;
-                    }
-                    for i in 1..4 {
-                        if ranks[i] < ranks[i - 1] {
-                            ranks[i] = ranks[i - 1]
-                        }
-                    }
-                    lower_rank = ranks[3];
-                } else {
-                    for i in 0..3 {
-                        ranks[i + 1] = ranks[i] + l1l2_chunk[i]
-                    }
-                    lower_rank = ranks[3] + l1l2_chunk[3];
+                for i in 0..3 {
+                    ranks[i + 1] = ranks[i] + l1l2_chunk[i]
                 }
+                lower_rank = ranks[3] + l1l2_chunk[3];
+                res.push(pack_l1l2(ranks));
+            }
+
+            // Final (possibly partial) set of 4 blocks
+            if partial_l1l2_chunk.len() > 0 {
+                let mut ranks = [lower_rank; 4];
+                // Slow path
+                for (i, c) in partial_l1l2_chunk.iter().cloned().enumerate() {
+                    ranks[i + 1] = ranks[i] + c;
+                }
+                let highest_rank = ranks[partial_l1l2_chunk.len()];
+                for i in (partial_l1l2_chunk.len() + 1)..4 {
+                    ranks[i] = highest_rank
+                }
+                lower_rank = ranks[3];
                 res.push(pack_l1l2(ranks));
             }
 
@@ -368,7 +374,6 @@ mod tests {
 
     quickcheck! {
         fn test_rank_and_count_fns(x: BitVec64) -> () {
-            // TODO: Test rank_zero
             let index = RankIndex::index(&x);
 
             let mut manual_rank = 0;
