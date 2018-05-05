@@ -23,7 +23,11 @@ pub(crate) fn ceil_div_64(i: usize) -> usize {
     div_64(i) + (if mod_64(i) > 0 { 1 } else { 0 })
 }
 
+pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
+    n / d + (if n % d > 0 { 1 } else { 0 })
+}
+
 pub mod bits64;
-pub mod words;
-pub mod bitvec64;
-pub mod index;
+// pub mod words;
+// pub mod bitvec64;
+// pub mod index;

@@ -22,29 +22,30 @@ impl Bits64 {
     }
 
     #[inline]
-    fn index_check(self, idx: usize) {
-        if idx >= self.len() {
-            panic!("Index out of range");
-        }
+    fn index_check(self, idx: usize) -> Option<()> {
+        if idx >= self.len() { None } else { Some(()) }
     }
 
     #[inline]
-    pub fn get(self, idx: usize) -> bool {
-        self.index_check(idx);
-        (u64::from(self) & (1 << (63 - idx))) > 0
+    pub fn get(self, idx: usize) -> Option<bool> {
+        self.index_check(idx)?;
+        Some((u64::from(self) & (1 << (63 - idx))) > 0)
     }
 
-    pub fn set_copy(self, idx: usize, to: bool) -> Self {
-        self.index_check(idx);
+    pub fn set_copy(self, idx: usize, to: bool) -> Option<Self> {
+        self.index_check(idx)?;
         let mask = 1 << (63 - idx);
         let int = u64::from(self);
         let res = if to { int | mask } else { int & (!mask) };
-        res.into()
+        Some(res.into())
     }
 
     #[inline]
-    pub fn set(&mut self, idx: usize, to: bool) {
-        *self = self.set_copy(idx, to)
+    pub fn set(&mut self, idx: usize, to: bool) -> Result<(), &'static str> {
+        match self.set_copy(idx, to) {
+            None => Err("index out of bounds"),
+            Some(rep) => Ok(*self = rep),
+        }
     }
 }
 
@@ -79,13 +80,13 @@ impl Bits64 {
     }
 
     #[inline]
-    pub fn rank(self, idx: usize) -> u32 {
-        self.index_check(idx);
+    pub fn rank(self, idx: usize) -> Option<u32> {
         if idx == 0 {
-            return 0;
+            return Some(0);
         };
+        self.index_check(idx)?;
         let to_count = u64::from(self) >> (64 - idx);
-        to_count.count_ones()
+        Some(to_count.count_ones())
     }
 
     #[inline]
@@ -94,17 +95,17 @@ impl Bits64 {
     }
 
     #[inline]
-    pub fn rank_zeros(self, idx: usize) -> u32 {
+    pub fn rank_zeros(self, idx: usize) -> Option<u32> {
         self.complement().rank(idx)
     }
 
-    pub fn select(self, nth: u32) -> u32 {
-        let rank_32 = self.rank(32);
-        let rank_16 = self.rank(16);
-        let rank_48 = self.rank(48);
+    pub fn select(self, nth: u32) -> Option<u32> {
+        let rank_32 = self.rank(32)?;
+        let rank_16 = self.rank(16)?;
+        let rank_48 = self.rank(48)?;
         let int: u64 = self.into();
 
-        if rank_32 > nth {
+        let res = if rank_32 > nth {
             if rank_16 > nth {
                 select_u16(((int >> 48) & 0xffff) as u16, nth)
             } else {
@@ -115,16 +116,17 @@ impl Bits64 {
                 select_u16(((int >> 16) & 0xffff) as u16, nth - rank_32) + 32
             } else {
                 if nth >= self.count_ones() {
-                    panic!("Index out of range");
+                    return None;
                 }
 
                 select_u16((int & 0xffff) as u16, nth - rank_48) + 48
             }
-        }
+        };
+        Some(res)
     }
 
     #[inline]
-    pub fn select_zeros(self, nth: u32) -> u32 {
+    pub fn select_zeros(self, nth: u32) -> Option<u32> {
         self.complement().select(nth)
     }
 }
@@ -152,7 +154,7 @@ mod tests {
             let x = Bits64::from(x);
             let mut res = Vec::with_capacity(x.len());
             for i in 0..x.len() {
-                res.push(x.get(i));
+                res.push(x.get(i).unwrap());
             }
             res.into_iter().enumerate()
         };
@@ -184,27 +186,26 @@ mod tests {
 
     quickcheck! {
         fn bounds_check_get(x: Bits64) -> bool {
-            use std::panic::catch_unwind;
-            catch_unwind(|| x.get(x.len())).is_err()
+            x.get(x.len()).is_none()
         }
 
         fn test_set(x: Bits64) -> bool {
             (0..x.len()).all(|i| {
                 let set_true = {
                     let mut x = x.clone();
-                    x.set(i, true);
+                    x.set(i, true).unwrap();
                     x
                 };
                 let set_false = {
                     let mut x = x.clone();
-                    x.set(i, false);
+                    x.set(i, false).unwrap();
                     x
                 };
 
                 (0..x.len()).all(|j| {
                     if i == j {
-                        set_true.get(j) == true
-                        && set_false.get(j) == false
+                        set_true.get(j).unwrap() == true
+                        && set_false.get(j).unwrap() == false
                     } else {
                         set_true.get(j) == x.get(j)
                         && set_false.get(j) == x.get(j)
@@ -214,48 +215,43 @@ mod tests {
         }
 
         fn bounds_check_set(x: Bits64, to: bool) -> bool {
-            use std::panic::catch_unwind;
-            catch_unwind(|| {
-                let mut x = x;
-                let len = x.len();
-                x.set(len, to)
-            }).is_err()
+            let mut x = x;
+            let len = x.len();
+            x.set(len, to).is_err()
         }
 
         fn test_count_ones(x: Bits64) -> bool {
-            let expected = (0..64).filter(|&i| x.get(i)).count();
+            let expected = (0..64).filter(|&i| x.get(i).unwrap()).count();
             x.count_ones() as usize == expected
         }
 
         fn test_count_zeros(x: Bits64) -> bool {
-            let expected = (0..64).filter(|&i| !x.get(i)).count();
+            let expected = (0..64).filter(|&i| !x.get(i).unwrap()).count();
             x.count_zeros() as usize == expected
         }
 
         fn test_rank(x: Bits64) -> bool {
             for i in 0..x.len() {
-                let expected = (0..i).filter(|&i| x.get(i)).count();
-                assert_eq!(x.rank(i) as usize, expected, "Rank didn't match at {}", i);
+                let expected = (0..i).filter(|&i| x.get(i).unwrap()).count();
+                assert_eq!(x.rank(i).unwrap() as usize, expected, "Rank didn't match at {}", i);
             }
             true
         }
 
         fn bounds_check_rank(x: Bits64) -> bool {
-            use std::panic::catch_unwind;
-            catch_unwind(|| x.rank(x.len())).is_err()
+            x.rank(x.len()).is_none()
         }
 
         fn test_rank_zeros(x: Bits64) -> bool {
             for i in 0..x.len() {
-                let expected = (0..i).filter(|&i| !x.get(i)).count();
-                assert_eq!(x.rank_zeros(i) as usize, expected, "Rank didn't match at {}", i);
+                let expected = (0..i).filter(|&i| !x.get(i).unwrap()).count();
+                assert_eq!(x.rank_zeros(i).unwrap() as usize, expected, "Rank didn't match at {}", i);
             }
             true
         }
 
         fn bounds_check_rank_zeros(x: Bits64) -> bool {
-            use std::panic::catch_unwind;
-            catch_unwind(|| x.rank_zeros(x.len())).is_err()
+            x.rank_zeros(x.len()).is_none()
         }
 
         fn test_complement(x: Bits64) -> bool {
@@ -268,9 +264,9 @@ mod tests {
             let x_bits = Bits64::from((x as u64) << 48);
             for i in 0..total_count {
                 let r = select_u16(x, i as u32) as usize;
-                let prev_rank = (0..r).filter(|&j| x_bits.get(j)).count();
+                let prev_rank = (0..r).filter(|&j| x_bits.get(j).unwrap()).count();
                 assert_eq!(prev_rank, i);
-                assert!(x_bits.get(r));
+                assert!(x_bits.get(r).unwrap());
             }
             assert_eq!(select_u16(x, total_count as u32), 16);
             assert_eq!(select_u16(x, 16), 16);
@@ -280,32 +276,29 @@ mod tests {
         fn test_select(x: Bits64) -> bool {
             let total_count = x.count_ones() as usize;
             for i in 0..total_count {
-                let r = x.select(i as u32) as usize;
-                assert_eq!(x.rank(r) as usize, i);
-                assert!(x.get(r));
+                let r = x.select(i as u32).unwrap() as usize;
+                assert_eq!(x.rank(r).unwrap() as usize, i);
+                assert!(x.get(r).unwrap());
             }
             true
         }
 
         fn bounds_check_select(x: Bits64) -> bool {
-            use std::panic::catch_unwind;
-            catch_unwind(|| x.select(x.count_ones())).is_err()
+            x.select(x.count_ones()).is_none()
         }
 
         fn test_select_zeros(x: Bits64) -> bool {
             let total_count = x.count_zeros() as usize;
             for i in 0..total_count {
-                let r = x.select_zeros(i as u32) as usize;
-                assert_eq!(x.rank_zeros(r) as usize, i);
-                assert!(!x.get(r));
+                let r = x.select_zeros(i as u32).unwrap() as usize;
+                assert_eq!(x.rank_zeros(r).unwrap() as usize, i);
+                assert!(!x.get(r).unwrap());
             }
             true
         }
 
         fn bounds_check_select_zeros(x: Bits64) -> bool {
-            use std::panic::catch_unwind;
-            catch_unwind(|| x.select_zeros(x.count_zeros())).is_err()
+            x.select_zeros(x.count_zeros()).is_none()
         }
     }
-
 }

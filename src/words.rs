@@ -35,14 +35,7 @@ fn read_word_last_word_case(data: &[u8], idx_bytes: usize) -> u64 {
 }
 
 pub fn len_words(data: &[u8]) -> usize {
-    let byte_len = data.len();
-    let full_words = byte_len / size_of::<u64>();
-    let partial_word = if (byte_len % size_of::<u64>()) > 0 {
-        1
-    } else {
-        0
-    };
-    full_words + partial_word
+    ceil_div(data.len(), size_of::<u64>())
 }
 
 const MAX_SIZE_FOR_U32_COUNT: usize = (<u32>::max_value() / 8) as usize;
@@ -94,104 +87,4 @@ pub fn count_ones(data: &[u8]) -> u64 {
         count += count_ones_u32(part) as u64
     }
     count
-}
-
-pub trait WordData {
-    fn len_words(&self) -> usize;
-    fn get_word(&self, idx: usize) -> u64;
-
-    #[inline]
-    fn count_ones_word(&self, idx: usize) -> u32 {
-        self.get_word(idx).count_ones()
-    }
-}
-
-impl WordData for [u8] {
-    #[inline]
-    fn len_words(&self) -> usize {
-        len_words(self)
-    }
-
-    #[inline]
-    fn get_word(&self, idx: usize) -> u64 {
-        read_word(self, idx)
-    }
-}
-
-impl<'a> WordData for &'a [u8] {
-    #[inline]
-    fn len_words(&self) -> usize {
-        (*self).len_words()
-    }
-
-    #[inline]
-    fn get_word(&self, idx: usize) -> u64 {
-        (*self).get_word(idx)
-    }
-
-    #[inline]
-    fn count_ones_word(&self, idx: usize) -> u32 {
-        (*self).count_ones_word(idx)
-    }
-}
-
-impl WordData for [u64] {
-    #[inline]
-    fn len_words(&self) -> usize {
-        self.len()
-    }
-
-    #[inline]
-    fn get_word(&self, idx: usize) -> u64 {
-        self[idx]
-    }
-}
-
-impl<'a> WordData for &'a [u64] {
-    #[inline]
-    fn len_words(&self) -> usize {
-        (*self).len_words()
-    }
-
-    #[inline]
-    fn get_word(&self, idx: usize) -> u64 {
-        (*self).get_word(idx)
-    }
-
-    #[inline]
-    fn count_ones_word(&self, idx: usize) -> u32 {
-        (*self).count_ones_word(idx)
-    }
-}
-
-pub trait WordDataSlice: WordData {
-    fn slice_from_word(&self, idx: usize) -> Self;
-}
-
-impl<'a> WordDataSlice for &'a [u8] {
-    #[inline]
-    fn slice_from_word(&self, idx: usize) -> Self {
-        &self[idx * 8..]
-    }
-}
-
-impl<'a> WordDataSlice for &'a [u64] {
-    #[inline]
-    fn slice_from_word(&self, idx: usize) -> Self {
-        &self[idx..]
-    }
-}
-
-
-pub trait BitData: WordData {
-    fn len_bits(&self) -> usize {
-        mult_64(self.len_words())
-    }
-
-    fn get_bit(&self, idx: usize) -> bool {
-        if idx >= self.len_bits() {
-            panic!("Index out of bounds");
-        }
-        Bits64::from(self.get_word(div_64(idx))).get(mod_64(idx))
-    }
 }
