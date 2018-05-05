@@ -1,37 +1,37 @@
-use super::{div_64, mod_64, mult_64};
+use super::{div_64, mod_64, mult_64, ceil_div};
 use std::mem::size_of;
-use bits64::Bits64;
+use word::Word;
 use byteorder::{BigEndian, ByteOrder};
 
-fn read_partial_word(data: &[u8]) -> u64 {
-    if data.len() >= size_of::<u64>() {
-        panic!("Expected partial word, got at least a full word");
-    } else if data.len() == 0 {
-        return 0;
-    }
-
-    let mut res = [0u8; size_of::<u64>()];
-    res[0..data.len()].copy_from_slice(data);
-    BigEndian::read_u64(&res)
-}
-
-pub fn read_word(data: &[u8], idx: usize) -> u64 {
+pub fn read_word(data: &[u8], idx: usize) -> Option<Word> {
     let idx_bytes = idx * size_of::<u64>();
     let end_idx_bytes = idx_bytes + size_of::<u64>();
     if end_idx_bytes > data.len() {
         read_word_last_word_case(data, idx_bytes)
     } else {
-        BigEndian::read_u64(&data[idx_bytes..end_idx_bytes])
+        Some(BigEndian::read_u64(&data[idx_bytes..end_idx_bytes]).into())
     }
 }
 
 #[cold]
-fn read_word_last_word_case(data: &[u8], idx_bytes: usize) -> u64 {
+fn read_word_last_word_case(data: &[u8], idx_bytes: usize) -> Option<Word> {
     if idx_bytes >= data.len() {
-        panic!("Index out of bounds");
+        return None;
     }
     debug_assert!((data.len() - idx_bytes) < size_of::<u64>());
     read_partial_word(&data[idx_bytes..])
+}
+
+fn read_partial_word(data: &[u8]) -> Option<Word> {
+    if data.len() >= size_of::<u64>() {
+        return None;
+    } else if data.len() == 0 {
+        return Some(Word::ZEROS);
+    }
+
+    let mut res = [0u8; size_of::<u64>()];
+    res[0..data.len()].copy_from_slice(data);
+    Some(BigEndian::read_u64(&res).into())
 }
 
 pub fn len_words(data: &[u8]) -> usize {
@@ -41,11 +41,9 @@ pub fn len_words(data: &[u8]) -> usize {
 const MAX_SIZE_FOR_U32_COUNT: usize = (<u32>::max_value() / 8) as usize;
 const MAX_SIZE_FOR_U64_COUNT: usize = (<u64>::max_value() / 8) as usize;
 
-pub fn count_ones_u32(data: &[u8]) -> u32 {
+pub fn count_ones_u32(data: &[u8]) -> Option<u32> {
     if data.len() > MAX_SIZE_FOR_U32_COUNT {
-        panic!("Too much data to count into a u32");
-    } else if data.len() < size_of::<u64>() {
-        return read_partial_word(data).count_ones();
+        return None;
     }
 
     // For actually casting we must match alignment
@@ -67,24 +65,29 @@ pub fn count_ones_u32(data: &[u8]) -> u32 {
         from_raw_parts(ptr, n_whole_words)
     };
 
-    let mut count: u32 = read_partial_word(pre_partial).count_ones() +
-        read_partial_word(post_partial).count_ones();
+    let mut count: u32 = {
+        let pre_partial =
+            read_partial_word(pre_partial).expect("pre_partial should always be a partial word");
+        let post_partial =
+            read_partial_word(post_partial).expect("post_partial should always be a partial word");
+        pre_partial.count_ones() + post_partial.count_ones()
+    };
 
     for word in data {
         count += word.count_ones();
     }
 
-    count
+    Some(count)
 }
 
-pub fn count_ones(data: &[u8]) -> u64 {
+pub fn count_ones(data: &[u8]) -> Option<u64> {
     if data.len() > MAX_SIZE_FOR_U64_COUNT {
-        panic!("Too much data to count into a u64");
+        return None;
     }
 
     let mut count: u64 = 0;
     for part in data.chunks(MAX_SIZE_FOR_U32_COUNT) {
-        count += count_ones_u32(part) as u64
+        count += count_ones_u32(part).expect("sub-part should always be countable in u32") as u64
     }
-    count
+    Some(count)
 }

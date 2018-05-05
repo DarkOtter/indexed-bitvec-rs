@@ -1,20 +1,20 @@
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Bits64(u64);
+pub struct Word(u64);
 
-impl From<u64> for Bits64 {
+impl From<u64> for Word {
     fn from(i: u64) -> Self {
-        Bits64(i)
+        Word(i)
     }
 }
 
-impl From<Bits64> for u64 {
-    fn from(i: Bits64) -> Self {
+impl From<Word> for u64 {
+    fn from(i: Word) -> Self {
         i.0
     }
 }
 
-impl Bits64 {
-    pub const ZEROS: Self = Bits64(0);
+impl Word {
+    pub const ZEROS: Self = Word(0);
 
     #[inline]
     fn len(self) -> usize {
@@ -68,7 +68,7 @@ fn select_u16(from: u16, mut nth: u32) -> u32 {
     }
 }
 
-impl Bits64 {
+impl Word {
     #[inline]
     pub fn count_ones(self) -> u32 {
         u64::from(self).count_ones()
@@ -137,7 +137,7 @@ mod tests {
     use quickcheck;
     use quickcheck::Arbitrary;
 
-    impl Arbitrary for Bits64 {
+    impl Arbitrary for Word {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
             u64::arbitrary(g).into()
         }
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_get() {
         let get_bits = |x: u64| {
-            let x = Bits64::from(x);
+            let x = Word::from(x);
             let mut res = Vec::with_capacity(x.len());
             for i in 0..x.len() {
                 res.push(x.get(i).unwrap());
@@ -177,7 +177,7 @@ mod tests {
             assert_eq!(x, (i & 1) > 0, "Bit {} was wrong", i);
         }
 
-        for shift in 0..Bits64::from(0).len() {
+        for shift in 0..Word::from(0).len() {
             for (i, x) in get_bits(0x8000000000000000 >> shift) {
                 assert_eq!(x, i == shift, "Bit {} was wrong", i);
             }
@@ -185,11 +185,11 @@ mod tests {
     }
 
     quickcheck! {
-        fn bounds_check_get(x: Bits64) -> bool {
+        fn bounds_check_get(x: Word) -> bool {
             x.get(x.len()).is_none()
         }
 
-        fn test_set(x: Bits64) -> bool {
+        fn test_set(x: Word) -> bool {
             (0..x.len()).all(|i| {
                 let set_true = {
                     let mut x = x.clone();
@@ -214,23 +214,23 @@ mod tests {
             })
         }
 
-        fn bounds_check_set(x: Bits64, to: bool) -> bool {
+        fn bounds_check_set(x: Word, to: bool) -> bool {
             let mut x = x;
             let len = x.len();
             x.set(len, to).is_err()
         }
 
-        fn test_count_ones(x: Bits64) -> bool {
+        fn test_count_ones(x: Word) -> bool {
             let expected = (0..64).filter(|&i| x.get(i).unwrap()).count();
             x.count_ones() as usize == expected
         }
 
-        fn test_count_zeros(x: Bits64) -> bool {
+        fn test_count_zeros(x: Word) -> bool {
             let expected = (0..64).filter(|&i| !x.get(i).unwrap()).count();
             x.count_zeros() as usize == expected
         }
 
-        fn test_rank(x: Bits64) -> bool {
+        fn test_rank(x: Word) -> bool {
             for i in 0..x.len() {
                 let expected = (0..i).filter(|&i| x.get(i).unwrap()).count();
                 assert_eq!(x.rank(i).unwrap() as usize, expected, "Rank didn't match at {}", i);
@@ -238,11 +238,11 @@ mod tests {
             true
         }
 
-        fn bounds_check_rank(x: Bits64) -> bool {
+        fn bounds_check_rank(x: Word) -> bool {
             x.rank(x.len()).is_none()
         }
 
-        fn test_rank_zeros(x: Bits64) -> bool {
+        fn test_rank_zeros(x: Word) -> bool {
             for i in 0..x.len() {
                 let expected = (0..i).filter(|&i| !x.get(i).unwrap()).count();
                 assert_eq!(x.rank_zeros(i).unwrap() as usize, expected, "Rank didn't match at {}", i);
@@ -250,18 +250,18 @@ mod tests {
             true
         }
 
-        fn bounds_check_rank_zeros(x: Bits64) -> bool {
+        fn bounds_check_rank_zeros(x: Word) -> bool {
             x.rank_zeros(x.len()).is_none()
         }
 
-        fn test_complement(x: Bits64) -> bool {
+        fn test_complement(x: Word) -> bool {
             let y = x.complement();
             (0..x.len()).all(|i| x.get(i) != y.get(i))
         }
 
         fn test_select_u16(x: u16) -> bool {
             let total_count = x.count_ones() as usize;
-            let x_bits = Bits64::from((x as u64) << 48);
+            let x_bits = Word::from((x as u64) << 48);
             for i in 0..total_count {
                 let r = select_u16(x, i as u32) as usize;
                 let prev_rank = (0..r).filter(|&j| x_bits.get(j).unwrap()).count();
@@ -273,7 +273,7 @@ mod tests {
             true
         }
 
-        fn test_select(x: Bits64) -> bool {
+        fn test_select(x: Word) -> bool {
             let total_count = x.count_ones() as usize;
             for i in 0..total_count {
                 let r = x.select(i as u32).unwrap() as usize;
@@ -283,11 +283,11 @@ mod tests {
             true
         }
 
-        fn bounds_check_select(x: Bits64) -> bool {
+        fn bounds_check_select(x: Word) -> bool {
             x.select(x.count_ones()).is_none()
         }
 
-        fn test_select_zeros(x: Bits64) -> bool {
+        fn test_select_zeros(x: Word) -> bool {
             let total_count = x.count_zeros() as usize;
             for i in 0..total_count {
                 let r = x.select_zeros(i as u32).unwrap() as usize;
@@ -297,7 +297,7 @@ mod tests {
             true
         }
 
-        fn bounds_check_select_zeros(x: Bits64) -> bool {
+        fn bounds_check_select_zeros(x: Word) -> bool {
             x.select_zeros(x.count_zeros()).is_none()
         }
     }
