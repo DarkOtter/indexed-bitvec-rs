@@ -28,6 +28,7 @@ pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
 }
 
 pub mod word;
+mod bits_type;
 pub mod bytes;
 // pub mod bitvec64;
 // pub mod index;
