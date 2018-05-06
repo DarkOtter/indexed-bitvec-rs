@@ -27,8 +27,19 @@ pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
     n / d + (if n % d > 0 { 1 } else { 0 })
 }
 
+pub const MAX_BITS_IN_BYTES: usize = (<u64>::max_value() / 8) as usize;
+pub const MAX_BITS: u64 = MAX_BITS_IN_BYTES as u64 * 8;
+
 pub mod word;
 mod bits_type;
 pub mod bytes;
 // pub mod bitvec64;
 // pub mod index;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn check_max_bits_in_bytes() {
+        assert!(<u64>::max_value() / 8 <= <usize>::max_value() as u64);
+    }
+}

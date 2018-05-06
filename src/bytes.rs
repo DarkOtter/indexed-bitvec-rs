@@ -1,9 +1,16 @@
-use super::{div_64, mod_64, mult_64, ceil_div};
+use super::{div_64, mod_64, mult_64, ceil_div, MAX_BITS, MAX_BITS_IN_BYTES};
 use std::mem::size_of;
+use std::cmp::min;
 use word::Word;
 use byteorder::{BigEndian, ByteOrder};
 
+const MAX_WORD_IDX: usize = (<usize>::max_value() - size_of::<u64>()) / size_of::<u64>();
+
 pub fn read_word(data: &[u8], idx: usize) -> Option<Word> {
+    if idx > MAX_WORD_IDX {
+        // Avoid overflow
+        return None;
+    };
     let idx_bytes = idx * size_of::<u64>();
     let end_idx_bytes = idx_bytes + size_of::<u64>();
     if end_idx_bytes > data.len() {
@@ -38,11 +45,9 @@ pub fn len_words(data: &[u8]) -> usize {
     ceil_div(data.len(), size_of::<u64>())
 }
 
-const MAX_SIZE_FOR_U32_COUNT: usize = (<u32>::max_value() / 8) as usize;
-const MAX_SIZE_FOR_U64_COUNT: usize = (<u64>::max_value() / 8) as usize;
-
-pub fn count_ones_u32(data: &[u8]) -> Option<u32> {
-    if data.len() > MAX_SIZE_FOR_U32_COUNT {
+pub fn count_ones(data: &[u8]) -> Option<u64> {
+    if data.len() > MAX_BITS_IN_BYTES {
+        // Avoid overflow
         return None;
     }
 
@@ -65,29 +70,36 @@ pub fn count_ones_u32(data: &[u8]) -> Option<u32> {
         from_raw_parts(ptr, n_whole_words)
     };
 
-    let mut count: u32 = {
+    let mut count: u64 = {
         let pre_partial =
             read_partial_word(pre_partial).expect("pre_partial should always be a partial word");
         let post_partial =
             read_partial_word(post_partial).expect("post_partial should always be a partial word");
-        pre_partial.count_ones() + post_partial.count_ones()
+        (pre_partial.count_ones() + post_partial.count_ones()) as u64
     };
 
     for word in data {
-        count += word.count_ones();
+        count += word.count_ones() as u64;
     }
 
     Some(count)
 }
 
-pub fn count_ones(data: &[u8]) -> Option<u64> {
-    if data.len() > MAX_SIZE_FOR_U64_COUNT {
+pub fn rank(data: &[u8], idx_bits: u64) -> Option<u64> {
+    if idx_bits > MAX_BITS {
+        // Avoid overflow
         return None;
     }
 
-    let mut count: u64 = 0;
-    for part in data.chunks(MAX_SIZE_FOR_U32_COUNT) {
-        count += count_ones_u32(part).expect("sub-part should always be countable in u32") as u64
+    let full_bytes = (idx_bits / 8) as usize;
+
+    if full_bytes >= data.len() {
+        return None;
     }
-    Some(count)
+
+    let rem = idx_bits % 8;
+    let full_bytes_count =
+        count_ones(&data[..full_bytes]).expect("Already checked for too-many-bits");
+    let rem_count = (!((!0u8) >> rem) & data[full_bytes]).count_ones();
+    Some(full_bytes_count + rem_count as u64)
 }
