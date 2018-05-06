@@ -10,7 +10,6 @@ byteorder = "1"
 quickcheck = "0.6"
 
 [profile.release]
-panic = "abort"
 lto = true
 codegen-units = 1
 incremental = false
