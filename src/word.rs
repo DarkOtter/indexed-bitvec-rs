@@ -1,3 +1,5 @@
+use ones_or_zeros::OnesOrZeros;
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Word(u64);
 
@@ -70,17 +72,29 @@ fn select_u16(from: u16, mut nth: u32) -> u32 {
 
 impl Word {
     #[inline]
+    pub fn complement(self) -> Self {
+        Self::from(!u64::from(self))
+    }
+
+    fn convert_to_ones<W: OnesOrZeros>(self) -> Self {
+        if W::is_ones() {
+            self
+        } else {
+            self.complement()
+        }
+    }
+
+    #[inline]
     pub fn count_ones(self) -> u32 {
         u64::from(self).count_ones()
     }
 
-    #[inline]
-    pub fn count_zeros(self) -> u32 {
-        u64::from(self).count_zeros()
+    pub fn count<W: OnesOrZeros>(self) -> u32 {
+        self.convert_to_ones::<W>().count_ones()
     }
 
     #[inline]
-    pub fn rank(self, idx: usize) -> Option<u32> {
+    pub fn rank_ones(self, idx: usize) -> Option<u32> {
         if idx == 0 {
             return Some(0);
         };
@@ -89,20 +103,14 @@ impl Word {
         Some(to_count.count_ones())
     }
 
-    #[inline]
-    pub fn complement(self) -> Self {
-        Self::from(!u64::from(self))
+    pub fn rank<W: OnesOrZeros>(self, idx: usize) -> Option<u32> {
+        self.convert_to_ones::<W>().rank_ones(idx)
     }
 
-    #[inline]
-    pub fn rank_zeros(self, idx: usize) -> Option<u32> {
-        self.complement().rank(idx)
-    }
-
-    pub fn select(self, nth: u32) -> Option<u32> {
-        let rank_32 = self.rank(32)?;
-        let rank_16 = self.rank(16)?;
-        let rank_48 = self.rank(48)?;
+    pub fn select_ones(self, nth: u32) -> Option<u32> {
+        let rank_32 = self.rank_ones(32)?;
+        let rank_16 = self.rank_ones(16)?;
+        let rank_48 = self.rank_ones(48)?;
         let int: u64 = self.into();
 
         let res = if rank_32 > nth {
@@ -125,9 +133,8 @@ impl Word {
         Some(res)
     }
 
-    #[inline]
-    pub fn select_zeros(self, nth: u32) -> Option<u32> {
-        self.complement().select(nth)
+    pub fn select<W: OnesOrZeros>(self, nth: u32) -> Option<u32> {
+        self.convert_to_ones::<W>().select_ones(nth)
     }
 }
 
@@ -147,6 +154,8 @@ mod tests {
             Box::new(base.map(|x| x.into()))
         }
     }
+
+    use ones_or_zeros::{OneBits, ZeroBits};
 
     #[test]
     fn test_get() {
@@ -220,46 +229,56 @@ mod tests {
             x.set(len, to).is_err()
         }
 
-        fn test_count_ones(x: Word) -> bool {
-            let expected = (0..64).filter(|&i| x.get(i).unwrap()).count();
-            x.count_ones() as usize == expected
-        }
-
-        fn test_count_zeros(x: Word) -> bool {
-            let expected = (0..64).filter(|&i| !x.get(i).unwrap()).count();
-            x.count_zeros() as usize == expected
-        }
-
-        fn test_rank(x: Word) -> bool {
-            for i in 0..x.len() {
-                let expected = (0..i).filter(|&i| x.get(i).unwrap()).count();
-                assert_eq!(x.rank(i).unwrap() as usize, expected, "Rank didn't match at {}", i);
-            }
-            true
-        }
-
-        fn bounds_check_rank(x: Word) -> bool {
-            x.rank(x.len()).is_none()
-        }
-
-        fn test_rank_zeros(x: Word) -> bool {
-            for i in 0..x.len() {
-                let expected = (0..i).filter(|&i| !x.get(i).unwrap()).count();
-                assert_eq!(x.rank_zeros(i).unwrap() as usize, expected, "Rank didn't match at {}", i);
-            }
-            true
-        }
-
-        fn bounds_check_rank_zeros(x: Word) -> bool {
-            x.rank_zeros(x.len()).is_none()
-        }
-
         fn test_complement(x: Word) -> bool {
             let y = x.complement();
             (0..x.len()).all(|i| x.get(i) != y.get(i))
         }
+    }
 
-        fn test_select_u16(x: u16) -> bool {
+    fn do_test_count<W: OnesOrZeros>(x: Word) {
+        let expected = (0..64)
+            .filter(|&i| x.get(i).unwrap() == W::is_ones())
+            .count();
+        assert_eq!(x.count::<W>() as usize, expected);
+    }
+
+    fn do_test_rank<W: OnesOrZeros>(x: Word) {
+        for i in 0..x.len() {
+            let expected = (0..i)
+                .filter(|&i| x.get(i).unwrap() == W::is_ones())
+                .count();
+            assert_eq!(
+                x.rank::<W>(i).unwrap() as usize,
+                expected,
+                "Rank didn't match at {}",
+                i
+            );
+        }
+        assert!(x.rank::<W>(x.len()).is_none());
+    }
+
+    fn do_test_select<W: OnesOrZeros>(x: Word) {
+        let total_count = x.count::<W>() as usize;
+        for i in 0..total_count {
+            let r = x.select::<W>(i as u32).unwrap() as usize;
+            assert_eq!(x.rank::<W>(r).unwrap() as usize, i);
+            assert_eq!(x.get(r).unwrap(), W::is_ones());
+        }
+        assert!(x.select::<W>(total_count as u32).is_none());
+    }
+
+    quickcheck! {
+        fn test_count(x: Word) -> () {
+            do_test_count::<OneBits>(x);
+            do_test_count::<ZeroBits>(x);
+        }
+
+        fn test_rank(x: Word) -> () {
+            do_test_rank::<OneBits>(x);
+            do_test_rank::<OneBits>(x);
+        }
+
+        fn test_select_u16(x: u16) -> () {
             let total_count = x.count_ones() as usize;
             let x_bits = Word::from((x as u64) << 48);
             for i in 0..total_count {
@@ -270,35 +289,11 @@ mod tests {
             }
             assert_eq!(select_u16(x, total_count as u32), 16);
             assert_eq!(select_u16(x, 16), 16);
-            true
         }
 
-        fn test_select(x: Word) -> bool {
-            let total_count = x.count_ones() as usize;
-            for i in 0..total_count {
-                let r = x.select(i as u32).unwrap() as usize;
-                assert_eq!(x.rank(r).unwrap() as usize, i);
-                assert!(x.get(r).unwrap());
-            }
-            true
-        }
-
-        fn bounds_check_select(x: Word) -> bool {
-            x.select(x.count_ones()).is_none()
-        }
-
-        fn test_select_zeros(x: Word) -> bool {
-            let total_count = x.count_zeros() as usize;
-            for i in 0..total_count {
-                let r = x.select_zeros(i as u32).unwrap() as usize;
-                assert_eq!(x.rank_zeros(r).unwrap() as usize, i);
-                assert!(!x.get(r).unwrap());
-            }
-            true
-        }
-
-        fn bounds_check_select_zeros(x: Word) -> bool {
-            x.select_zeros(x.count_zeros()).is_none()
+        fn test_select(x: Word) -> () {
+            do_test_select::<OneBits>(x);
+            do_test_select::<ZeroBits>(x);
         }
     }
 }
