@@ -39,4 +39,57 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     pub fn decompose(self) -> (T, usize) {
         self.0
     }
+
+    pub fn get(&self, idx: usize) -> Option<bool> {
+        if idx >= self.used_bits() {
+            return None;
+        }
+
+        let byte_idx = idx >> 3;
+        let idx_in_byte = idx & 7;
+
+        let byte = self.bytes()[byte_idx];
+        let mask = 0x80 >> idx_in_byte;
+        Some((byte & mask) != 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quickcheck;
+    use quickcheck::Arbitrary;
+
+    impl Arbitrary for Bits<Box<[u8]>> {
+        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+            let data = <Vec<u8>>::arbitrary(g);
+            let all_bits = data.len() * 8;
+            let overflow = g.gen_range(0, 64);
+            Self::from(data.into_boxed_slice(), all_bits.saturating_sub(overflow))
+                .expect("Generated bits must be valid")
+        }
+    }
+
+    #[test]
+    fn test_get() {
+        let pattern_a = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+        let bits_a = Bits::from(&pattern_a[..], 8 * 8).unwrap();
+        for i in 0..bits_a.used_bits() {
+            assert_eq!(
+                bits_a.get(i).unwrap(),
+                i / 8 == i % 8,
+                "Differed at position {}",
+                i
+            )
+        }
+
+        let pattern_b = [0xff, 0xc0];
+        let bits_b = Bits::from(&pattern_b[..], 10).unwrap();
+        for i in 0..10 {
+            assert_eq!(bits_b.get(i), Some(true), "Differed at position {}", i)
+        }
+        for i in 10..16 {
+            assert_eq!(bits_b.get(i), None, "Differed at position {}", i)
+        }
+    }
 }
