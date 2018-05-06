@@ -84,7 +84,6 @@ impl Word {
         }
     }
 
-    #[inline]
     pub fn count_ones(self) -> u32 {
         u64::from(self).count_ones()
     }
@@ -103,6 +102,7 @@ impl Word {
         Some(to_count.count_ones())
     }
 
+    #[inline]
     pub fn rank<W: OnesOrZeros>(self, idx: usize) -> Option<u32> {
         self.convert_to_ones::<W>().rank_ones(idx)
     }
