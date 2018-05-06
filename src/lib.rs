@@ -30,6 +30,9 @@ pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
 pub const MAX_BITS_IN_BYTES: usize = (<u64>::max_value() / 8) as usize;
 pub const MAX_BITS: u64 = MAX_BITS_IN_BYTES as u64 * 8;
 
+pub mod ones_or_zeros;
+pub use ones_or_zeros::{OneBits, ZeroBits};
+
 pub mod word;
 mod bits_type;
 pub mod bytes;
