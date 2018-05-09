@@ -1,4 +1,5 @@
 ## Todo
 
-- no_std
-- support const_fn?
+- no_std part of the library
+- support const_fn? what for?
+- parallel construction?

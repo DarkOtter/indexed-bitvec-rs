@@ -5,6 +5,7 @@ use word::Word;
 use byteorder::{BigEndian, ByteOrder};
 use ones_or_zeros::OnesOrZeros;
 
+/*
 const MAX_WORD_IDX: usize = (<usize>::max_value() - size_of::<u64>()) / size_of::<u64>();
 
 pub fn read_word(data: &[u8], idx: usize) -> Option<Word> {
@@ -30,6 +31,7 @@ fn read_word_last_word_case(data: &[u8], idx_bytes: usize) -> Option<Word> {
     read_partial_word(&data[idx_bytes..])
 }
 
+
 fn read_partial_word(data: &[u8]) -> Option<Word> {
     if data.len() >= size_of::<u64>() {
         return None;
@@ -45,6 +47,7 @@ fn read_partial_word(data: &[u8]) -> Option<Word> {
 pub fn len_words(data: &[u8]) -> usize {
     ceil_div(data.len(), size_of::<u64>())
 }
+*/
 
 fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
     // For actually casting we must match alignment
@@ -77,20 +80,16 @@ pub fn count_ones(data: &[u8]) -> Option<u64> {
     }
 
     let (pre_partial, data, post_partial) = bytes_as_u64s(data);
-
-    let mut count: u64 = {
-        let pre_partial =
-            read_partial_word(pre_partial).expect("pre_partial should always be a partial word");
-        let post_partial =
-            read_partial_word(post_partial).expect("post_partial should always be a partial word");
-        (pre_partial.count_ones() + post_partial.count_ones()) as u64
-    };
-
-    for word in data {
-        count += word.count_ones() as u64;
-    }
-
-    Some(count)
+    let pre_partial = pre_partial
+        .iter()
+        .map(|&x| x.count_ones() as u64)
+        .sum::<u64>();
+    let post_partial = pre_partial
+        .iter()
+        .map(|&x| x.count_ones() as u64)
+        .sum::<u64>();
+    let data = data.map(|&x| x.count_ones() as u64).sum::<u64>();
+    Some(pre_partial + data + post_partial)
 }
 
 pub fn count<W: OnesOrZeros>(data: &[u8]) -> Option<u64> {
@@ -128,6 +127,7 @@ fn len_in_bits<T: Sized>(dat: &[T]) -> u64 {
 }
 
 pub fn select<W: OnesOrZeros>(data: &[u8], idx: u64) -> Option<u64> {
+    // TODO: Redo in byte-oriented fashion
     let (pre_partial, data, post_partial) = bytes_as_u64s(data);
 
     let mut running_count = {
@@ -171,4 +171,50 @@ pub fn select<W: OnesOrZeros>(data: &[u8], idx: u64) -> Option<u64> {
         .map(|sub_res| {
             len_in_bits(pre_partial) + len_in_bits(data) + sub_res as u64
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /*
+
+    #[test]
+    fn test_read_word_basic() {
+        let pattern = [0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 5];
+        let data = &pattern[..];
+        assert_eq!(data.len(), 15);
+        assert_eq!(u64::from(read_word(data, 0).unwrap()), 5u64);
+        assert_eq!(u64::from(read_word(data, 1).unwrap()), 5u64 * 256);
+    }
+
+    quickcheck! {
+        fn test_read_word(bits: OwnedBits) -> () {
+            for word_idx in 0..ceil_div(bits.used_bits(), 64) {
+                let word = read_word(bits.bytes(), word_idx).unwrap();
+                for i in 0..64 {
+                    let bit_idx = word_idx * 64 + i;
+                    match bits.get(bit_idx) {
+                        None => {
+                            assert!(bit_idx >= bits.used_bits());
+                            if bit_idx / 8 >= bits.bytes().len() {
+                            
+                            assert_eq!(word.get(i), Some(false), "Failed padding word (word {}, bit {})", word_idx, i);
+                            }
+                        },
+                        original_bit => {
+                            assert_eq!(word.get(i), original_bit, "Failed preserving bit (word {}, bit {})", word_idx, i);
+                        }
+                    }
+                }
+            }
+        }
+
+        fn test_count(bits: OwnedBits) -> () {
+            let count_ones = count::<OneBits>(bits.bytes());
+        }
+    }
+
+    */
+
 }

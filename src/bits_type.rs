@@ -1,6 +1,9 @@
 use std::ops::Deref;
 use super::ceil_div;
 
+#[derive(Copy, Clone, Debug)]
+pub struct Bits<T: Deref<Target = [u8]>>((T, usize));
+
 fn used_bits_to_bytes(bits: usize) -> usize {
     let whole_bytes = bits >> 3;
     let partial_byte = {
@@ -10,11 +13,8 @@ fn used_bits_to_bytes(bits: usize) -> usize {
     whole_bytes + partial_byte
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Bits<T: Deref<Target = [u8]>>((T, usize));
-
 fn big_enough(bytes: &[u8], used_bits: usize) -> bool {
-    bytes.len() >= ceil_div(used_bits, 8)
+    bytes.len() >= used_bits_to_bytes(used_bits)
 }
 
 impl<T: Deref<Target = [u8]>> Bits<T> {
@@ -26,12 +26,16 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
+    pub fn all_bytes(&self) -> &[u8] {
+        (self.0).0.deref()
+    }
+
     pub fn used_bits(&self) -> usize {
         (self.0).1
     }
 
     pub fn bytes(&self) -> &[u8] {
-        let all_bytes = (self.0).0.deref();
+        let all_bytes = self.all_bytes();
         debug_assert!(big_enough(all_bytes, self.used_bits()));
         &all_bytes[..used_bits_to_bytes(self.used_bits())]
     }
