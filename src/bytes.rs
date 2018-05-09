@@ -1,7 +1,7 @@
 use super::{div_64, mod_64, mult_64, ceil_div, MAX_BITS, MAX_BITS_IN_BYTES};
 use std::mem::size_of;
 use std::cmp::min;
-use word::Word;
+use word::{select_ones_u16, Word};
 use byteorder::{BigEndian, ByteOrder};
 use ones_or_zeros::OnesOrZeros;
 
@@ -84,11 +84,11 @@ pub fn count_ones(data: &[u8]) -> Option<u64> {
         .iter()
         .map(|&x| x.count_ones() as u64)
         .sum::<u64>();
-    let post_partial = pre_partial
+    let post_partial = post_partial
         .iter()
         .map(|&x| x.count_ones() as u64)
         .sum::<u64>();
-    let data = data.map(|&x| x.count_ones() as u64).sum::<u64>();
+    let data = data.iter().map(|&x| x.count_ones() as u64).sum::<u64>();
     Some(pre_partial + data + post_partial)
 }
 
@@ -127,50 +127,46 @@ fn len_in_bits<T: Sized>(dat: &[T]) -> u64 {
 }
 
 pub fn select<W: OnesOrZeros>(data: &[u8], idx: u64) -> Option<u64> {
-    // TODO: Redo in byte-oriented fashion
     let (pre_partial, data, post_partial) = bytes_as_u64s(data);
 
-    let mut running_count = {
-        let pre_partial_word =
-            read_partial_word(pre_partial).expect("pre_partial should always be a partial word");
-        let pre_partial_count = pre_partial_word.rank::<W>(pre_partial.len() * 8).expect(
-            "index should always be in range",
-        ) as u64;
-        if pre_partial_count > idx {
-            return pre_partial_word.select::<W>(idx as u32).map(Into::into);
-        };
-        pre_partial_count
-    };
+    let mut running_count = 0u64;
+    let mut running_index = 0u64;
 
-    for (i, word) in data.iter().cloned().enumerate() {
-        let word_count = W::count(word) as u64;
-
-        if word_count + running_count > idx {
-            return Word::from(u64::from_be(word))
-                .select::<W>((idx - running_count) as u32)
-                .map(|sub_res| {
-                    len_in_bits(pre_partial) + len_in_bits(&data[..i]) + sub_res as u64
-                });
-        };
-
-        running_count += word_count;
+    for &byte in pre_partial.iter() {
+        let count = W::convert_count(byte.count_ones() as u64, 8);
+        if running_count + count > idx {
+            let selected = select_ones_u16(byte as u16, (idx - running_count) as u32);
+            let answer = selected as u64 - 8 + running_index;
+            return Some(answer);
+        }
+        running_count += count;
+        running_index += 8;
     }
 
-    let post_partial_word =
-        read_partial_word(post_partial).expect("post_partial should always be a partial word");
-    let post_partial_count = post_partial_word.rank::<W>(post_partial.len() * 8).expect(
-        "index should always be in range",
-    ) as u64;
+    for &word in data.iter() {
+        let count = W::convert_count(word.count_ones() as u64, 64);
+        if running_count + count > idx {
+            let answer = Word::from(u64::from_be(word))
+                .select::<W>((idx - running_count) as u32)
+                .map(|sub_res| running_count + sub_res as u64);
+            return answer;
+        }
+        running_count += count;
+        running_index += 64;
+    }
 
-    if idx >= running_count + post_partial_count {
-        return None;
-    };
+    for &byte in post_partial.iter() {
+        let count = W::convert_count(byte.count_ones() as u64, 8);
+        if running_count + count > idx {
+            let selected = select_ones_u16(byte as u16, (idx - running_count) as u32);
+            let answer = selected as u64 - 8 + running_index;
+            return Some(answer);
+        }
+        running_count += count;
+        running_index += 8;
+    }
 
-    post_partial_word
-        .select::<W>((idx - running_count) as u32)
-        .map(|sub_res| {
-            len_in_bits(pre_partial) + len_in_bits(data) + sub_res as u64
-        })
+    None
 }
 
 #[cfg(test)]

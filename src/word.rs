@@ -51,7 +51,7 @@ impl Word {
     }
 }
 
-fn select_u16(from: u16, mut nth: u32) -> u32 {
+pub(crate) fn select_ones_u16(from: u16, mut nth: u32) -> u32 {
     let mut offset = 0;
     let mut from = from as u32;
     loop {
@@ -115,19 +115,19 @@ impl Word {
 
         let res = if rank_32 > nth {
             if rank_16 > nth {
-                select_u16(((int >> 48) & 0xffff) as u16, nth)
+                select_ones_u16(((int >> 48) & 0xffff) as u16, nth)
             } else {
-                select_u16(((int >> 32) & 0xffff) as u16, nth - rank_16) + 16
+                select_ones_u16(((int >> 32) & 0xffff) as u16, nth - rank_16) + 16
             }
         } else {
             if rank_48 > nth {
-                select_u16(((int >> 16) & 0xffff) as u16, nth - rank_32) + 32
+                select_ones_u16(((int >> 16) & 0xffff) as u16, nth - rank_32) + 32
             } else {
                 if nth >= self.count_ones() {
                     return None;
                 }
 
-                select_u16((int & 0xffff) as u16, nth - rank_48) + 48
+                select_ones_u16((int & 0xffff) as u16, nth - rank_48) + 48
             }
         };
         Some(res)
@@ -282,13 +282,13 @@ mod tests {
             let total_count = x.count_ones() as usize;
             let x_bits = Word::from((x as u64) << 48);
             for i in 0..total_count {
-                let r = select_u16(x, i as u32) as usize;
+                let r = select_ones_u16(x, i as u32) as usize;
                 let prev_rank = (0..r).filter(|&j| x_bits.get(j).unwrap()).count();
                 assert_eq!(prev_rank, i);
                 assert!(x_bits.get(r).unwrap());
             }
-            assert_eq!(select_u16(x, total_count as u32), 16);
-            assert_eq!(select_u16(x, 16), 16);
+            assert_eq!(select_ones_u16(x, total_count as u32), 16);
+            assert_eq!(select_ones_u16(x, 16), 16);
         }
 
         fn test_select(x: Word) -> () {
