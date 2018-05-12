@@ -2,17 +2,19 @@ use super::{MAX_BITS, MAX_BITS_IN_BYTES};
 use word::{select_ones_u16, Word};
 use ones_or_zeros::OnesOrZeros;
 
-pub(crate) fn get_unchecked(data: &[u8], idx_bits: usize) -> bool {
-    let byte_idx = idx_bits >> 3;
-    let idx_in_byte = idx_bits & 7;
+pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
+    let byte_idx = (idx_bits >> 3) as usize;
+    let idx_in_byte = (idx_bits & 7) as usize;
 
     let byte = data[byte_idx];
     let mask = 0x80 >> idx_in_byte;
     (byte & mask) != 0
 }
 
-pub fn get(data: &[u8], idx_bits: usize) -> Option<bool> {
-    if idx_bits >> 3 >= data.len() {
+pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
+    if idx_bits > MAX_BITS {
+        return None;
+    } else if (idx_bits >> 3) as usize >= data.len() {
         None
     } else {
         Some(get_unchecked(data, idx_bits))
@@ -171,12 +173,12 @@ mod tests {
         for i in 0..(bytes_a.len() * 8) {
             assert_eq!(
                 i / 8 == i % 8,
-                get(bytes_a, i).unwrap(),
+                get(bytes_a, i as u64).unwrap(),
                 "Differed at position {}",
                 i
             )
         }
-        assert_eq!(None, get(bytes_a, bytes_a.len() * 8));
+        assert_eq!(None, get(bytes_a, bytes_a.len() as u64 * 8));
 
         let pattern_b = [0xff, 0xc0];
         let bytes_b = &pattern_b[..];
