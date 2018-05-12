@@ -261,10 +261,10 @@ mod tests {
         let total_count = x.count::<W>() as usize;
         for i in 0..total_count {
             let r = x.select::<W>(i as u32).unwrap() as usize;
-            assert_eq!(x.rank::<W>(r).unwrap() as usize, i);
-            assert_eq!(x.get(r).unwrap(), W::is_ones());
+            assert_eq!(Some(i as u32), x.rank::<W>(r));
+            assert_eq!(Some(W::is_ones()), x.get(r));
         }
-        assert!(x.select::<W>(total_count as u32).is_none());
+        assert_eq!(None, x.select::<W>(total_count as u32));
     }
 
     quickcheck! {

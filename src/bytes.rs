@@ -5,6 +5,23 @@ use word::{select_ones_u16, Word};
 use byteorder::{BigEndian, ByteOrder};
 use ones_or_zeros::OnesOrZeros;
 
+pub(crate) fn get_unchecked(data: &[u8], idx_bits: usize) -> bool {
+    let byte_idx = idx_bits >> 3;
+    let idx_in_byte = idx_bits & 7;
+
+    let byte = data[byte_idx];
+    let mask = 0x80 >> idx_in_byte;
+    (byte & mask) != 0
+}
+
+pub fn get(data: &[u8], idx_bits: usize) -> Option<bool> {
+    if idx_bits >> 3 >= data.len() {
+        None
+    } else {
+        Some(get_unchecked(data, idx_bits))
+    }
+}
+
 /*
 const MAX_WORD_IDX: usize = (<usize>::max_value() - size_of::<u64>()) / size_of::<u64>();
 
@@ -49,10 +66,15 @@ pub fn len_words(data: &[u8]) -> usize {
 }
 */
 
-fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
+fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
+    use std::mem::{size_of, align_of};
+
+    if data.len() < size_of::<u64>() || data.len() < align_of::<u64>() {
+        return Err(data);
+    }
+
     // For actually casting we must match alignment
     let alignment_offset = {
-        use std::mem::align_of;
         let need_alignment = align_of::<u64>();
         let rem = (data.as_ptr() as usize) % need_alignment;
         if rem > 0 { need_alignment - rem } else { 0 }
@@ -70,7 +92,17 @@ fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
         from_raw_parts(ptr, n_whole_words)
     };
 
-    (pre_partial, data, post_partial)
+    Ok((pre_partial, data, post_partial))
+}
+
+/// Unsafe because it could overflow the count
+fn count_ones_unsafe<T: Copy, F: Fn(T) -> u32>(count_ones: F, data: &[T]) -> u64 {
+    data.iter().map(|&x| count_ones(x) as u64).sum::<u64>()
+}
+
+/// Unsafe because it could overflow the count
+fn count_ones_base_unsafe(data: &[u8]) -> u64 {
+    count_ones_unsafe(<u8>::count_ones, data)
 }
 
 pub fn count_ones(data: &[u8]) -> Option<u64> {
@@ -79,17 +111,13 @@ pub fn count_ones(data: &[u8]) -> Option<u64> {
         return None;
     }
 
-    let (pre_partial, data, post_partial) = bytes_as_u64s(data);
-    let pre_partial = pre_partial
-        .iter()
-        .map(|&x| x.count_ones() as u64)
-        .sum::<u64>();
-    let post_partial = post_partial
-        .iter()
-        .map(|&x| x.count_ones() as u64)
-        .sum::<u64>();
-    let data = data.iter().map(|&x| x.count_ones() as u64).sum::<u64>();
-    Some(pre_partial + data + post_partial)
+    match bytes_as_u64s(data) {
+        Err(data) => Some(count_ones_base_unsafe(data)),
+        Ok((pre_partial, data, post_partial)) => Some(
+            count_ones_base_unsafe(pre_partial) + count_ones_unsafe(<u64>::count_ones, data) +
+                count_ones_base_unsafe(post_partial),
+        ),
+    }
 }
 
 pub fn count<W: OnesOrZeros>(data: &[u8]) -> Option<u64> {
@@ -121,57 +149,168 @@ pub fn rank<W: OnesOrZeros>(data: &[u8], idx_bits: u64) -> Option<u64> {
     rank_ones(data, idx_bits).map(|count_ones| W::convert_count(count_ones, idx_bits))
 }
 
-fn len_in_bits<T: Sized>(dat: &[T]) -> u64 {
-    use std::mem::size_of;
-    dat.len() as u64 * size_of::<T>() as u64 * 8
-}
-
-pub fn select<W: OnesOrZeros>(data: &[u8], idx: u64) -> Option<u64> {
-    let (pre_partial, data, post_partial) = bytes_as_u64s(data);
-
-    let mut running_count = 0u64;
+// If it returns Err it returns the total count for the data
+fn select_base<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64> {
+    let mut running_rank = 0u64;
     let mut running_index = 0u64;
 
-    for &byte in pre_partial.iter() {
+    for &byte in data.iter() {
         let count = W::convert_count(byte.count_ones() as u64, 8);
-        if running_count + count > idx {
-            let selected = select_ones_u16(byte as u16, (idx - running_count) as u32);
+        if running_rank + count > target_rank {
+            // TODO: This uses select ones...
+            let select_in = if W::is_ones() {
+                byte as u16
+            } else {
+                (!byte) as u16
+            };
+            let selected = select_ones_u16(select_in, (target_rank - running_rank) as u32);
             let answer = selected as u64 - 8 + running_index;
-            return Some(answer);
+            return Ok(answer);
         }
-        running_count += count;
+        running_rank += count;
         running_index += 8;
     }
+
+    Err(running_rank)
+}
+
+pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
+    let parts = bytes_as_u64s(data);
+
+    let (pre_partial, data, post_partial) = match bytes_as_u64s(data) {
+        Err(data) => return select_base::<W>(data, target_rank).ok(),
+        Ok(x) => x,
+    };
+
+    let pre_partial_count = match select_base::<W>(pre_partial, target_rank) {
+        Ok(res) => return Some(res),
+        Err(count) => count,
+    };
+
+    let mut running_rank = pre_partial_count;
+    let mut running_index = pre_partial.len() as u64 * 8;
 
     for &word in data.iter() {
         let count = W::convert_count(word.count_ones() as u64, 64);
-        if running_count + count > idx {
+        if running_rank + count > target_rank {
             let answer = Word::from(u64::from_be(word))
-                .select::<W>((idx - running_count) as u32)
-                .map(|sub_res| running_count + sub_res as u64);
+                .select::<W>((target_rank - running_rank) as u32)
+                .map(|sub_res| running_index + sub_res as u64);
             return answer;
         }
-        running_count += count;
+        running_rank += count;
         running_index += 64;
     }
 
-    for &byte in post_partial.iter() {
-        let count = W::convert_count(byte.count_ones() as u64, 8);
-        if running_count + count > idx {
-            let selected = select_ones_u16(byte as u16, (idx - running_count) as u32);
-            let answer = selected as u64 - 8 + running_index;
-            return Some(answer);
-        }
-        running_count += count;
-        running_index += 8;
-    }
-
-    None
+    select_base::<W>(post_partial, target_rank - running_rank)
+        .ok()
+        .map(|sub_res| running_index + sub_res)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck;
+    use ones_or_zeros::{OneBits, ZeroBits};
+
+    #[test]
+    fn test_get() {
+        let pattern_a = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+        let bytes_a = &pattern_a[..];
+        for i in 0..(bytes_a.len() * 8) {
+            assert_eq!(
+                i / 8 == i % 8,
+                get(bytes_a, i).unwrap(),
+                "Differed at position {}",
+                i
+            )
+        }
+        assert_eq!(None, get(bytes_a, bytes_a.len() * 8));
+
+        let pattern_b = [0xff, 0xc0];
+        let bytes_b = &pattern_b[..];
+        for i in 0..10 {
+            assert_eq!(Some(true), get(bytes_b, i), "Differed at position {}", i)
+        }
+        for i in 10..16 {
+            assert_eq!(Some(false), get(bytes_b, i), "Differed at position {}", i)
+        }
+    }
+
+    quickcheck! {
+        fn test_count(data: Vec<u8>) -> bool {
+            let mut count_ones = 0u64;
+            let mut count_zeros = 0u64;
+
+            for byte in data.iter().cloned() {
+                count_ones += byte.count_ones() as u64;
+                count_zeros += byte.count_zeros() as u64;
+            }
+
+            count::<OneBits>(&data) == Some(count_ones)
+                && count::<ZeroBits>(&data) == Some(count_zeros)
+        }
+    }
+
+    fn bits_of_byte(b: u8) -> [bool; 8] {
+        let mut res = [false; 8];
+        for (i, r) in res.iter_mut().enumerate() {
+            *r = (b & (1 << (7 - i))) > 0
+        }
+        res
+    }
+
+    #[test]
+    fn test_rank() {
+        use rand::thread_rng;
+        let mut gen = quickcheck::StdGen::new(thread_rng(), 1024);
+        let data = <Vec<u8> as quickcheck::Arbitrary>::arbitrary(&mut gen);
+
+        let mut rank_ones = 0u64;
+        let mut rank_zeros = 0u64;
+
+        for (byte_idx, byte) in data.iter().cloned().enumerate() {
+            let byte_idx = byte_idx as u64;
+            let bits = bits_of_byte(byte);
+            for (bit_idx, bit) in bits.iter().cloned().enumerate() {
+                let bit_idx = bit_idx as u64;
+                assert_eq!(
+                    Some(rank_ones),
+                    rank::<OneBits>(&data, byte_idx * 8 + bit_idx)
+                );
+                assert_eq!(
+                    Some(rank_zeros),
+                    rank::<ZeroBits>(&data, byte_idx * 8 + bit_idx)
+                );
+
+                if bit {
+                    rank_ones += 1;
+                } else {
+                    rank_zeros += 1;
+                }
+            }
+        }
+    }
+
+    fn do_test_select<W: OnesOrZeros>(data: &Vec<u8>) {
+        let total_count = count::<W>(&data).unwrap() as usize;
+        for i in 0..total_count {
+            let i = i as u64;
+            let r = select::<W>(&data, i).expect("Already checked in-bounds");
+            assert_eq!(Some(i), rank::<W>(&data, r));
+        }
+        assert_eq!(None, select::<W>(&data, total_count as u64));
+    }
+
+    #[test]
+    fn test_select() {
+        use rand::thread_rng;
+        let mut gen = quickcheck::StdGen::new(thread_rng(), 1024);
+        let data = <Vec<u8> as quickcheck::Arbitrary>::arbitrary(&mut gen);
+
+        do_test_select::<OneBits>(&data);
+        do_test_select::<ZeroBits>(&data);
+    }
 
     /*
 

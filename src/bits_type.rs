@@ -1,5 +1,6 @@
 use std::ops::Deref;
 use super::ceil_div;
+use bytes::get_unchecked;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, usize));
@@ -44,17 +45,13 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         self.0
     }
 
-    pub fn get(&self, idx: usize) -> Option<bool> {
-        if idx >= self.used_bits() {
-            return None;
+    pub fn get(&self, idx_bits: usize) -> Option<bool> {
+        debug_assert!(big_enough(self.all_bytes(), self.used_bits()));
+        if idx_bits >= self.used_bits() {
+            None
+        } else {
+            Some(get_unchecked(self.all_bytes(), idx_bits))
         }
-
-        let byte_idx = idx >> 3;
-        let idx_in_byte = idx & 7;
-
-        let byte = self.bytes()[byte_idx];
-        let mask = 0x80 >> idx_in_byte;
-        Some((byte & mask) != 0)
     }
 }
 
