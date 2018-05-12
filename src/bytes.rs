@@ -1,8 +1,5 @@
-use super::{div_64, mod_64, mult_64, ceil_div, MAX_BITS, MAX_BITS_IN_BYTES};
-use std::mem::size_of;
-use std::cmp::min;
+use super::{MAX_BITS, MAX_BITS_IN_BYTES};
 use word::{select_ones_u16, Word};
-use byteorder::{BigEndian, ByteOrder};
 use ones_or_zeros::OnesOrZeros;
 
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: usize) -> bool {
@@ -21,50 +18,6 @@ pub fn get(data: &[u8], idx_bits: usize) -> Option<bool> {
         Some(get_unchecked(data, idx_bits))
     }
 }
-
-/*
-const MAX_WORD_IDX: usize = (<usize>::max_value() - size_of::<u64>()) / size_of::<u64>();
-
-pub fn read_word(data: &[u8], idx: usize) -> Option<Word> {
-    if idx > MAX_WORD_IDX {
-        // Avoid overflow
-        return None;
-    };
-    let idx_bytes = idx * size_of::<u64>();
-    let end_idx_bytes = idx_bytes + size_of::<u64>();
-    if end_idx_bytes > data.len() {
-        read_word_last_word_case(data, idx_bytes)
-    } else {
-        Some(BigEndian::read_u64(&data[idx_bytes..end_idx_bytes]).into())
-    }
-}
-
-#[cold]
-fn read_word_last_word_case(data: &[u8], idx_bytes: usize) -> Option<Word> {
-    if idx_bytes >= data.len() {
-        return None;
-    }
-    debug_assert!((data.len() - idx_bytes) < size_of::<u64>());
-    read_partial_word(&data[idx_bytes..])
-}
-
-
-fn read_partial_word(data: &[u8]) -> Option<Word> {
-    if data.len() >= size_of::<u64>() {
-        return None;
-    } else if data.len() == 0 {
-        return Some(Word::ZEROS);
-    }
-
-    let mut res = [0u8; size_of::<u64>()];
-    res[0..data.len()].copy_from_slice(data);
-    Some(BigEndian::read_u64(&res).into())
-}
-
-pub fn len_words(data: &[u8]) -> usize {
-    ceil_div(data.len(), size_of::<u64>())
-}
-*/
 
 fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     use std::mem::{size_of, align_of};
@@ -175,8 +128,6 @@ fn select_base<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64
 }
 
 pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
-    let parts = bytes_as_u64s(data);
-
     let (pre_partial, data, post_partial) = match bytes_as_u64s(data) {
         Err(data) => return select_base::<W>(data, target_rank).ok(),
         Ok(x) => x,
@@ -311,45 +262,4 @@ mod tests {
         do_test_select::<OneBits>(&data);
         do_test_select::<ZeroBits>(&data);
     }
-
-    /*
-
-    #[test]
-    fn test_read_word_basic() {
-        let pattern = [0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 5];
-        let data = &pattern[..];
-        assert_eq!(data.len(), 15);
-        assert_eq!(u64::from(read_word(data, 0).unwrap()), 5u64);
-        assert_eq!(u64::from(read_word(data, 1).unwrap()), 5u64 * 256);
-    }
-
-    quickcheck! {
-        fn test_read_word(bits: OwnedBits) -> () {
-            for word_idx in 0..ceil_div(bits.used_bits(), 64) {
-                let word = read_word(bits.bytes(), word_idx).unwrap();
-                for i in 0..64 {
-                    let bit_idx = word_idx * 64 + i;
-                    match bits.get(bit_idx) {
-                        None => {
-                            assert!(bit_idx >= bits.used_bits());
-                            if bit_idx / 8 >= bits.bytes().len() {
-                            
-                            assert_eq!(word.get(i), Some(false), "Failed padding word (word {}, bit {})", word_idx, i);
-                            }
-                        },
-                        original_bit => {
-                            assert_eq!(word.get(i), original_bit, "Failed preserving bit (word {}, bit {})", word_idx, i);
-                        }
-                    }
-                }
-            }
-        }
-
-        fn test_count(bits: OwnedBits) -> () {
-            let count_ones = count::<OneBits>(bits.bytes());
-        }
-    }
-
-    */
-
 }

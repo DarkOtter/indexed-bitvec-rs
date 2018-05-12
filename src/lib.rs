@@ -39,7 +39,6 @@ pub use ones_or_zeros::{OneBits, ZeroBits};
 pub mod word;
 pub mod bytes;
 pub mod bits_type;
-// pub mod bitvec64;
 // pub mod index;
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
 use std::ops::Deref;
-use super::ceil_div;
 use bytes::get_unchecked;
 
 #[derive(Copy, Clone, Debug)]
