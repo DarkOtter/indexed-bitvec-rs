@@ -1,20 +1,13 @@
 use super::{mult_64, div_64, mod_64, ceil_div_64};
-use words::{WordData, BitData};
-use bits64::Bits64;
-use bitvec64::BitVec64;
-
-#[inline]
-fn ceil_div(n: usize, d: usize) -> usize {
-    (n / d) + if n % d > 0 { 1 } else { 0 }
-}
 
 mod size {
     use super::ceil_div;
 
-    pub const BITS_PER_L0_BLOCK: usize = 1 << 32;
-    pub const BITS_PER_BLOCK: usize = 512;
+    pub const BITS_PER_L0_BLOCK: u64 = 1 << 32;
+    pub const BITS_PER_BLOCK: u64 = 512;
 
-    pub fn l0(total_bits: usize) -> usize {
+    pub fn l0(total_bits: u64) -> u64 {
+
         if total_bits <= BITS_PER_L0_BLOCK {
             0
         } else {

@@ -7,27 +7,30 @@ extern crate rand;
 #[macro_use]
 extern crate quickcheck;
 
-#[inline(always)]
-pub(crate) fn mult_64(i: usize) -> usize {
-    i << 6
-}
-
-#[inline(always)]
-pub(crate) fn div_64(i: usize) -> usize {
-    i >> 6
-}
-
-#[inline(always)]
-pub(crate) fn mod_64(i: usize) -> usize {
-    i & 63
-}
-
-pub(crate) fn ceil_div_64(i: usize) -> usize {
-    div_64(i) + (if mod_64(i) > 0 { 1 } else { 0 })
-}
-
-pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
+#[cold]
+fn ceil_div_slow(n: usize, d: usize) -> usize {
     n / d + (if n % d > 0 { 1 } else { 0 })
+}
+
+#[inline(always)]
+pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
+    let nb = n.wrapping_add(d - 1);
+    if n < nb { nb / d } else { ceil_div_slow(n, d) }
+}
+
+#[cold]
+fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
+    n / d + (if n % d > 0 { 1 } else { 0 })
+}
+
+#[inline(always)]
+pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
+    let nb = n.wrapping_add(d - 1);
+    if n < nb {
+        nb / d
+    } else {
+        ceil_div_u64_slow(n, d)
+    }
 }
 
 pub const MAX_BITS_IN_BYTES: usize = (<u64>::max_value() / 8) as usize;

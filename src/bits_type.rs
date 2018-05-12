@@ -1,5 +1,6 @@
-use super::MAX_BITS;
+use super::{ceil_div_u64, MAX_BITS};
 use std::ops::Deref;
+use std::cmp::min;
 use bytes;
 use ones_or_zeros::OnesOrZeros;
 
@@ -10,12 +11,7 @@ fn used_bits_to_bytes(bits: u64) -> usize {
     if bits > MAX_BITS {
         panic!("Too many bits");
     }
-    let whole_bytes = (bits >> 3) as usize;
-    let partial_byte = {
-        let x = (bits & 7) as usize;
-        (x >> 2 | x >> 1 | x) & 1
-    };
-    whole_bytes + partial_byte
+    ceil_div_u64(bits, 8) as usize
 }
 
 fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
@@ -68,18 +64,11 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 
     fn count_part<W: OnesOrZeros>(&self, used_bits: u64) -> Option<u64> {
         let bytes = self.bytes_for(used_bits);
-        if bytes.len() == 0 {
-            return Some(0);
-        };
-        let whole_bytes_count = bytes::count::<W>(bytes)?;
-        let rem = used_bits & 7;
-        if rem == 0 {
-            return Some(whole_bytes_count);
-        };
-        let last_byte = bytes[bytes.len() - 1];
-        let last_byte = if W::is_ones() { last_byte } else { !last_byte };
-        let mask = !0u8 >> rem;
-        Some(whole_bytes_count - (last_byte & mask).count_ones() as u64)
+        if (used_bits % 8) != 0 {
+            bytes::rank::<W>(bytes, used_bits)
+        } else {
+            bytes::count::<W>(bytes)
+        }
     }
 
     pub fn count<W: OnesOrZeros>(&self) -> Option<u64> {
@@ -106,6 +95,18 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
                 }
             }
         }
+    }
+
+    pub(crate) fn chunks_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
+        let available_bits = self.used_bits();
+        let bits_per_chunk = (bytes_per_chunk as u64) * 8;
+        self.bytes().chunks(bytes_per_chunk).enumerate().map(
+            move |(i, chunk)| {
+                let used_bits = i as u64 * bits_per_chunk;
+                let bits = min(available_bits - used_bits, bits_per_chunk);
+                Bits::from(chunk, bits).expect("Size invariant violated")
+            },
+        )
     }
 }
 

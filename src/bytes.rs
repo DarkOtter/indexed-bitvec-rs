@@ -3,8 +3,8 @@ use word::{select_ones_u16, Word};
 use ones_or_zeros::OnesOrZeros;
 
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
-    let byte_idx = (idx_bits >> 3) as usize;
-    let idx_in_byte = (idx_bits & 7) as usize;
+    let byte_idx = (idx_bits / 8) as usize;
+    let idx_in_byte = (idx_bits % 8) as usize;
 
     let byte = data[byte_idx];
     let mask = 0x80 >> idx_in_byte;
@@ -14,7 +14,7 @@ pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
 pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     if idx_bits > MAX_BITS {
         return None;
-    } else if (idx_bits >> 3) as usize >= data.len() {
+    } else if (idx_bits / 8) as usize >= data.len() {
         None
     } else {
         Some(get_unchecked(data, idx_bits))
