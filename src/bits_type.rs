@@ -108,6 +108,21 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
             },
         )
     }
+
+    pub(crate) fn skip_bytes(&self, idx_bytes: usize) -> Bits<&[u8]> {
+        let bytes = self.bytes();
+        if idx_bytes >= bytes.len() {
+            panic!("Tried to skip the whole of a bitvector");
+        }
+        Bits::from(
+            &bytes[idx_bytes..],
+            self.used_bits() - (idx_bytes as u64 * 8),
+        ).expect("Checked sufficient bytes are present")
+    }
+
+    pub fn clone_ref(&self) -> Bits<&[u8]> {
+        Bits::from(self.all_bytes(), self.used_bits()).expect("Previously checked")
+    }
 }
 
 #[cfg(test)]

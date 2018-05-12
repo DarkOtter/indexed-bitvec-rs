@@ -42,7 +42,7 @@ pub use ones_or_zeros::{OneBits, ZeroBits};
 pub mod word;
 pub mod bytes;
 pub mod bits_type;
-// pub mod index;
+pub mod index;
 
 #[cfg(test)]
 mod tests {
