@@ -112,7 +112,6 @@ fn select_base<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64
     for &byte in data.iter() {
         let count = W::convert_count(byte.count_ones() as u64, 8);
         if running_rank + count > target_rank {
-            // TODO: This uses select ones...
             let select_in = if W::is_ones() {
                 byte as u16
             } else {
