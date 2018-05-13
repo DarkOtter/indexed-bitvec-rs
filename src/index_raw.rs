@@ -1,5 +1,4 @@
 use super::{ceil_div, ceil_div_u64};
-use std::ops::Deref;
 use bits_type::Bits;
 use ones_or_zeros::{OneBits, ZeroBits, OnesOrZeros};
 
@@ -285,6 +284,7 @@ fn build_inner_index(index: &mut [u64], data: Bits<&[u8]>) -> u32 {
     let zeros_sample_words = ceil_div(zeros_samples, 2);
 
     debug_assert!(ones_sample_words + zeros_sample_words <= select_part.len());
+    debug_assert!(ones_sample_words + zeros_sample_words + 1 >= select_part.len());
 
     let (ones_select_part, zeros_select_part) = select_part.split_at_mut(ones_sample_words);
     let zeros_select_part = &mut zeros_select_part[..zeros_sample_words];
@@ -301,25 +301,29 @@ fn build_inner_index(index: &mut [u64], data: Bits<&[u8]>) -> u32 {
 
 /// You need this many u64s for the index for these bits.
 /// This calculation is O(1) (maths based on the number of bits).
-pub fn index_size_for<T: Deref<Target = [u8]>>(bits: &Bits<T>) -> usize {
+pub fn index_size_for(bits: Bits<&[u8]>) -> usize {
     size::total_index_words(bits.used_bits())
 }
 
 use result::Error;
 
-pub fn build_index_for<T: Deref<Target = [u8]>>(
-    bits: &Bits<T>,
-    into: &mut [u64],
-) -> Result<(), Error> {
-    let need_size = index_size_for(bits);
-    if into.len() != need_size {
-        return Err(Error::IndexIncorrectSize);
-    } else if bits.used_bits() == 0 {
-        debug_assert_eq!(0, need_size);
+pub fn check_index_size(index: &[u64], bits: Bits<&[u8]>) -> Result<(), Error> {
+    if index.len() != index_size_for(bits) {
+        Err(Error::IndexIncorrectSize)
+    } else {
+        Ok(())
+    }
+}
+
+
+pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error> {
+    check_index_size(into, bits)?;
+
+    if bits.used_bits() == 0 {
+        debug_assert_eq!(0, into.len());
         return Ok(());
     }
 
-    let bits = bits.clone_ref();
     let l0_size = size::l0(bits.used_bits());
     let (l0_index, index) = into.split_at_mut(l0_size);
 
@@ -338,4 +342,82 @@ pub fn build_index_for<T: Deref<Target = [u8]>>(
     }
 
     Ok(())
+}
+
+/// This does not check the size of the index is correct,
+/// so you may get panics from slice indexing instead.
+///
+/// This is still memory safe, it just might be confusing.
+pub fn count_ones_unchecked(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+    let l0_size = size::l0(bits.used_bits());
+    if bits.used_bits() == 0 {
+        return 0;
+    }
+    debug_assert!(l0_size > 0);
+    index[l0_size - 1]
+}
+
+/// This does not check the size of the index is correct,
+/// so you may get panics from slice indexing instead.
+///
+/// This is still memory safe, it just might be confusing.
+pub fn count_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+    W::convert_count(count_ones_unchecked(index, bits), bits.used_bits())
+}
+
+/// This does not check the size of the index is correct,
+/// so you may get panics from slice indexing instead.
+///
+/// This is still memory safe, it just might be confusing.
+pub fn rank_ones_unchecked(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+    if idx >= bits.used_bits() {
+        return None;
+    } else if idx == 0 {
+        return Some(0);
+    }
+
+    let l0_size = size::l0(bits.used_bits());
+    let l0_index = (idx / size::BITS_PER_L0_BLOCK) as usize;
+    debug_assert!(l0_index < l0_size);
+
+    let l0_rank = if l0_index > 0 { index[l0_index - 1] } else { 0 };
+    let inner_index = &index[l0_size + l0_index * size::INNER_INDEX_SIZE..];
+    let l0_offset = idx % size::BITS_PER_L0_BLOCK;
+
+    let l1_index = (l0_offset / size::BITS_PER_BLOCK) as usize;
+    debug_assert!(l1_index < inner_index.len());
+
+    let l1l2_entry = L1L2Entry::from(inner_index[l1_index]);
+    let l1_rank = l1l2_entry.base_rank();
+
+    let l2_index = l0_offset % size::BITS_PER_BLOCK;
+    let mut l2_rank = 0;
+    if l2_index >= 1 {
+        l2_rank += l1l2_entry.sub_count_1();
+        if l2_index >= 2 {
+            l2_rank += l1l2_entry.sub_count_2();
+            if l2_index >= 3 {
+                l2_rank += l1l2_entry.sub_count_3();
+            }
+        }
+    }
+    let l2_rank = l2_rank;
+
+    Some(l0_rank + l1_rank + l2_rank)
+}
+
+/// This does not check the size of the index is correct,
+/// so you may get panics from slice indexing instead.
+///
+/// This is still memory safe, it just might be confusing.
+pub fn rank_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+    rank_ones_unchecked(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
+}
+
+/// This does not check the size of the index is correct,
+/// so you may get panics from slice indexing instead.
+///
+/// This is still memory safe, it just might be confusing.
+pub fn select_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+    panic!("Not implemented")
 }
