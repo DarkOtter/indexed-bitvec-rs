@@ -43,7 +43,7 @@ pub mod result;
 pub mod word;
 pub mod bytes;
 pub mod bits_type;
-pub mod index;
+pub mod index_raw;
 
 #[cfg(test)]
 mod tests {

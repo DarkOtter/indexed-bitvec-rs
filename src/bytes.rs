@@ -1,7 +1,5 @@
 use word::{select_ones_u16, Word};
 use ones_or_zeros::OnesOrZeros;
-use result::*;
-use std::result;
 
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
     let byte_idx = (idx_bits / 8) as usize;
@@ -21,7 +19,7 @@ pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     }
 }
 
-fn bytes_as_u64s(data: &[u8]) -> result::Result<(&[u8], &[u64], &[u8]), &[u8]> {
+fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     use std::mem::{size_of, align_of};
 
     if data.len() < size_of::<u64>() || data.len() < align_of::<u64>() {
@@ -94,7 +92,7 @@ pub fn rank<W: OnesOrZeros>(data: &[u8], idx_bits: u64) -> Option<u64> {
 }
 
 /// If it returns Err it returns the total count for the data.
-fn select_by_bytes<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> result::Result<u64, u64> {
+fn select_by_bytes<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64> {
     let mut running_rank = 0u64;
     let mut running_index = 0u64;
 

@@ -21,7 +21,6 @@ impl error::Error for Error {
 impl fmt::Display for Error {
     fn fmt(&self, into: &mut fmt::Formatter) -> fmt::Result {
         use self::error::Error;
-        use self::fmt::Display;
 
         self.description().fmt(into)
     }

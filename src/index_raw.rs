@@ -1,10 +1,10 @@
-use super::{ceil_div, ceil_div_u64, MAX_BITS};
+use super::{ceil_div, ceil_div_u64};
 use std::ops::Deref;
 use bits_type::Bits;
 use ones_or_zeros::{OneBits, ZeroBits, OnesOrZeros};
 
 mod size {
-    use super::{ceil_div, ceil_div_u64};
+    use super::ceil_div_u64;
 
     pub const BITS_PER_L0_BLOCK: u64 = 1 << 32;
     pub const BITS_PER_BLOCK: u64 = 512;
@@ -16,31 +16,26 @@ mod size {
         ceil_div_u64(total_bits, BITS_PER_L0_BLOCK) as usize
     }
 
-    pub fn blocks(total_bits: u64) -> u64 {
-        ceil_div_u64(total_bits, BITS_PER_BLOCK)
-    }
-
     pub fn l1l2(total_bits: u64) -> usize {
-        ceil_div_u64(blocks(total_bits), 4) as usize
+        ceil_div_u64(total_bits, BITS_PER_BLOCK * 4) as usize
     }
 
-    pub fn rank_index(total_bits: u64) -> usize {
+    fn rank_index(total_bits: u64) -> usize {
         l0(total_bits) + l1l2(total_bits)
     }
 
     pub const SAMPLE_LENGTH: u64 = 8192;
 
-    pub fn sample_entries(total_bits: u64) -> usize {
-        ceil_div_u64(total_bits, SAMPLE_LENGTH) as usize + l0(total_bits)
-    }
-
     pub fn sample_words(total_bits: u64) -> usize {
-        ceil_div(sample_entries(total_bits), 2) + l0(total_bits)
+        ceil_div_u64(total_bits, SAMPLE_LENGTH * 2) as usize + l0(total_bits)
     }
 
     pub fn total_index_words(total_bits: u64) -> usize {
-        l1l2(total_bits) + sample_words(total_bits)
+        rank_index(total_bits) + sample_words(total_bits)
     }
+
+    pub const INNER_INDEX_SIZE: usize = (BITS_PER_L0_BLOCK / (BITS_PER_BLOCK * 4)) as usize +
+        (BITS_PER_L0_BLOCK / (SAMPLE_LENGTH * 2) + 1) as usize;
 
     #[cfg(test)]
     mod tests {
@@ -74,6 +69,14 @@ mod size {
             assert_eq!(0, BITS_PER_L0_BLOCK % SAMPLE_LENGTH);
             assert_eq!(0, (BITS_PER_L0_BLOCK / SAMPLE_LENGTH) % 2);
             assert_eq!(1, l0(BITS_PER_L0_BLOCK));
+        }
+
+        #[test]
+        fn inner_index_size() {
+            assert_eq!(
+                l1l2(BITS_PER_L0_BLOCK) + sample_words(BITS_PER_L0_BLOCK),
+                INNER_INDEX_SIZE
+            );
         }
     }
 }
@@ -251,7 +254,7 @@ fn pack_samples_index<F: Fn(u32) -> Option<u32>>(
             let low_part = select(first_sample_offset + size::SAMPLE_LENGTH as u32)
                 .expect("Should not overflow") as u64;
 
-            *write_to = ((high_part << 32) | low_part)
+            *write_to = (high_part << 32) | low_part
         },
     );
 
@@ -260,7 +263,7 @@ fn pack_samples_index<F: Fn(u32) -> Option<u32>>(
         let samples_idx = n_samples - 1;
         let first_sample_offset = (samples_idx as u64 * size::SAMPLE_LENGTH) as u32;
         let high_part = select(first_sample_offset).expect("Should not overflow") as u64;
-        *part_pack = (high_part << 32);
+        *part_pack = high_part << 32;
     }
 }
 
@@ -302,17 +305,15 @@ pub fn index_size_for<T: Deref<Target = [u8]>>(bits: &Bits<T>) -> usize {
     size::total_index_words(bits.used_bits())
 }
 
-pub enum IndexingError {
-    IncorrectSize,
-}
+use result::Error;
 
 pub fn build_index_for<T: Deref<Target = [u8]>>(
     bits: &Bits<T>,
     into: &mut [u64],
-) -> Result<(), IndexingError> {
+) -> Result<(), Error> {
     let need_size = index_size_for(bits);
     if into.len() != need_size {
-        return Err(IndexingError::IncorrectSize);
+        return Err(Error::IndexIncorrectSize);
     } else if bits.used_bits() == 0 {
         debug_assert_eq!(0, need_size);
         return Ok(());
@@ -322,13 +323,12 @@ pub fn build_index_for<T: Deref<Target = [u8]>>(
     let l0_size = size::l0(bits.used_bits());
     let (l0_index, index) = into.split_at_mut(l0_size);
 
-    l0_index
-        .iter_mut()
-        .zip(index.chunks_mut(size::l1l2(size::BITS_PER_L0_BLOCK)).zip(
-            bits.chunks_bytes(size::BYTES_PER_L0_BLOCK),
-        ))
-        .for_each(|(write_l0, (inner_index, l0_chunk))| {
-            *write_l0 = build_inner_index(inner_index, l0_chunk) as u64
+    // This loop could be parallelised
+    bits.chunks_bytes(size::BYTES_PER_L0_BLOCK)
+        .zip(index.chunks_mut(size::INNER_INDEX_SIZE))
+        .zip(l0_index.iter_mut())
+        .for_each(|((l0_chunk, inner_index), write_to)| {
+            *write_to = build_inner_index(inner_index, l0_chunk) as u64
         });
 
     let mut total_count = 0u64;

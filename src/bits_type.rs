@@ -1,4 +1,4 @@
-use super::{ceil_div_u64, MAX_BITS};
+use super::ceil_div_u64;
 use std::ops::Deref;
 use std::cmp::min;
 use bytes;
@@ -7,19 +7,8 @@ use ones_or_zeros::OnesOrZeros;
 #[derive(Copy, Clone, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
 
-fn used_bits_to_bytes(bits: u64) -> usize {
-    if bits > MAX_BITS {
-        panic!("Too many bits");
-    }
-    ceil_div_u64(bits, 8) as usize
-}
-
 fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
-    if used_bits > MAX_BITS {
-        false
-    } else {
-        bytes.len() >= used_bits_to_bytes(used_bits)
-    }
+    ceil_div_u64(used_bits, 8) <= bytes.len() as u64
 }
 
 impl<T: Deref<Target = [u8]>> Bits<T> {
@@ -39,14 +28,12 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         (self.0).1
     }
 
-    fn bytes_for(&self, used_bits: u64) -> &[u8] {
-        let all_bytes = self.all_bytes();
-        debug_assert!(big_enough(all_bytes, used_bits));
-        &all_bytes[..used_bits_to_bytes(used_bits)]
-    }
-
     pub fn bytes(&self) -> &[u8] {
-        self.bytes_for(self.used_bits())
+        let all_bytes = self.all_bytes();
+        debug_assert!(big_enough(all_bytes, self.used_bits()));
+        // This will not overflow because we checked the size
+        // when we made self...
+        &all_bytes[..ceil_div_u64(self.used_bits(), 8) as usize]
     }
 
     pub fn decompose(self) -> (T, u64) {
