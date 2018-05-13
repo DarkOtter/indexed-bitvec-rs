@@ -39,6 +39,7 @@ pub const MAX_BITS: u64 = MAX_BITS_IN_BYTES as u64 * 8;
 pub mod ones_or_zeros;
 pub use ones_or_zeros::{OneBits, ZeroBits};
 
+pub mod result;
 pub mod word;
 pub mod bytes;
 pub mod bits_type;

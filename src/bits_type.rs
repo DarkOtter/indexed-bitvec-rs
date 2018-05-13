@@ -62,24 +62,22 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
-    fn count_part<W: OnesOrZeros>(&self, used_bits: u64) -> Option<u64> {
-        let bytes = self.bytes_for(used_bits);
-        if (used_bits % 8) != 0 {
-            bytes::rank::<W>(bytes, used_bits)
+    pub fn count<W: OnesOrZeros>(&self) -> u64 {
+        if (self.used_bits() % 8) != 0 {
+            bytes::rank::<W>(self.all_bytes(), self.used_bits())
+                .expect("Internally called rank out-of-range")
         } else {
-            bytes::count::<W>(bytes)
+            bytes::count::<W>(self.bytes())
         }
-    }
-
-    pub fn count<W: OnesOrZeros>(&self) -> Option<u64> {
-        self.count_part::<W>(self.used_bits())
     }
 
     pub fn rank<W: OnesOrZeros>(&self, idx: u64) -> Option<u64> {
         if idx >= self.used_bits() {
             None
         } else {
-            self.count_part::<W>(idx)
+            Some(bytes::rank::<W>(self.all_bytes(), idx).expect(
+                "Internally called rank out-of-range",
+            ))
         }
     }
 
@@ -170,28 +168,28 @@ mod tests {
         let pattern_a = [0xff, 0xaau8];
         let bytes_a = &pattern_a[..];
         let make = |len: u64| Bits::from(bytes_a, len).expect("valid");
-        assert_eq!(Some(12), make(16).count::<OneBits>());
-        assert_eq!(Some(4), make(16).count::<ZeroBits>());
-        assert_eq!(Some(12), make(15).count::<OneBits>());
-        assert_eq!(Some(3), make(15).count::<ZeroBits>());
-        assert_eq!(Some(11), make(14).count::<OneBits>());
-        assert_eq!(Some(3), make(14).count::<ZeroBits>());
-        assert_eq!(Some(11), make(13).count::<OneBits>());
-        assert_eq!(Some(2), make(13).count::<ZeroBits>());
-        assert_eq!(Some(10), make(12).count::<OneBits>());
-        assert_eq!(Some(2), make(12).count::<ZeroBits>());
-        assert_eq!(Some(10), make(11).count::<OneBits>());
-        assert_eq!(Some(1), make(11).count::<ZeroBits>());
-        assert_eq!(Some(9), make(10).count::<OneBits>());
-        assert_eq!(Some(1), make(10).count::<ZeroBits>());
-        assert_eq!(Some(9), make(9).count::<OneBits>());
-        assert_eq!(Some(0), make(9).count::<ZeroBits>());
-        assert_eq!(Some(8), make(8).count::<OneBits>());
-        assert_eq!(Some(0), make(8).count::<ZeroBits>());
-        assert_eq!(Some(7), make(7).count::<OneBits>());
-        assert_eq!(Some(0), make(7).count::<ZeroBits>());
-        assert_eq!(Some(0), make(0).count::<OneBits>());
-        assert_eq!(Some(0), make(0).count::<ZeroBits>());
+        assert_eq!(12, make(16).count::<OneBits>());
+        assert_eq!(4, make(16).count::<ZeroBits>());
+        assert_eq!(12, make(15).count::<OneBits>());
+        assert_eq!(3, make(15).count::<ZeroBits>());
+        assert_eq!(11, make(14).count::<OneBits>());
+        assert_eq!(3, make(14).count::<ZeroBits>());
+        assert_eq!(11, make(13).count::<OneBits>());
+        assert_eq!(2, make(13).count::<ZeroBits>());
+        assert_eq!(10, make(12).count::<OneBits>());
+        assert_eq!(2, make(12).count::<ZeroBits>());
+        assert_eq!(10, make(11).count::<OneBits>());
+        assert_eq!(1, make(11).count::<ZeroBits>());
+        assert_eq!(9, make(10).count::<OneBits>());
+        assert_eq!(1, make(10).count::<ZeroBits>());
+        assert_eq!(9, make(9).count::<OneBits>());
+        assert_eq!(0, make(9).count::<ZeroBits>());
+        assert_eq!(8, make(8).count::<OneBits>());
+        assert_eq!(0, make(8).count::<ZeroBits>());
+        assert_eq!(7, make(7).count::<OneBits>());
+        assert_eq!(0, make(7).count::<ZeroBits>());
+        assert_eq!(0, make(0).count::<OneBits>());
+        assert_eq!(0, make(0).count::<ZeroBits>());
     }
 
     #[test]
@@ -201,10 +199,11 @@ mod tests {
         let make = |len: u64| Bits::from(bytes_a, len).expect("valid");
         let bits_a = make(16);
         for i in 0..15 {
-            assert!(bits_a.rank::<OneBits>(i).is_some());
-            assert!(bits_a.rank::<ZeroBits>(i).is_some());
-            assert_eq!(make(i).count::<OneBits>(), bits_a.rank::<OneBits>(i));
-            assert_eq!(make(i).count::<ZeroBits>(), bits_a.rank::<ZeroBits>(i));
+            assert_eq!(Some(make(i).count::<OneBits>()), bits_a.rank::<OneBits>(i));
+            assert_eq!(
+                Some(make(i).count::<ZeroBits>()),
+                bits_a.rank::<ZeroBits>(i)
+            );
         }
         assert_eq!(None, bits_a.rank::<OneBits>(16));
         assert_eq!(None, bits_a.rank::<ZeroBits>(16));

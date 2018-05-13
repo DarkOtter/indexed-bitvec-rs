@@ -137,9 +137,7 @@ fn build_inner_rank_index(index: &mut [u64], data: Bits<&[u8]>) -> u32 {
                 .chunks_bytes(size::BYTES_PER_BLOCK)
                 .zip(counts.iter_mut())
                 .for_each(|(chunk, write_to)| {
-                    *write_to = chunk.count::<OneBits>().expect(
-                        "Must be small enough to count",
-                    ) as u16
+                    *write_to = chunk.count::<OneBits>() as u16
                 });
 
             let total = counts.iter().map(|&c| c as u32).sum::<u32>();

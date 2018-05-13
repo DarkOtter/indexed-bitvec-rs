@@ -1,6 +1,7 @@
-use super::{MAX_BITS, MAX_BITS_IN_BYTES};
 use word::{select_ones_u16, Word};
 use ones_or_zeros::OnesOrZeros;
+use result::*;
+use std::result;
 
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
     let byte_idx = (idx_bits / 8) as usize;
@@ -12,16 +13,15 @@ pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
 }
 
 pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
-    if idx_bits > MAX_BITS {
-        return None;
-    } else if (idx_bits / 8) as usize >= data.len() {
+    let byte_idx = idx_bits / 8;
+    if byte_idx >= data.len() as u64 {
         None
     } else {
         Some(get_unchecked(data, idx_bits))
     }
 }
 
-fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
+fn bytes_as_u64s(data: &[u8]) -> result::Result<(&[u8], &[u64], &[u8]), &[u8]> {
     use std::mem::{size_of, align_of};
 
     if data.len() < size_of::<u64>() || data.len() < align_of::<u64>() {
@@ -50,52 +50,41 @@ fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     Ok((pre_partial, data, post_partial))
 }
 
-/// Unsafe because it could overflow the count
-fn count_ones_unsafe<T: Copy, F: Fn(T) -> u32>(count_ones: F, data: &[T]) -> u64 {
+fn count_ones_with<T: Copy, F: Fn(T) -> u32>(data: &[T], count_ones: F) -> u64 {
     data.iter().map(|&x| count_ones(x) as u64).sum::<u64>()
 }
 
-/// Unsafe because it could overflow the count
-fn count_ones_base_unsafe(data: &[u8]) -> u64 {
-    count_ones_unsafe(<u8>::count_ones, data)
+fn count_ones_bytes_slow(data: &[u8]) -> u64 {
+    count_ones_with(data, <u8>::count_ones)
 }
 
-pub fn count_ones(data: &[u8]) -> Option<u64> {
-    if data.len() > MAX_BITS_IN_BYTES {
-        // Avoid overflow
-        return None;
-    }
+fn count_ones_words(data: &[u64]) -> u64 {
+    count_ones_with(data, <u64>::count_ones)
+}
 
+pub fn count_ones(data: &[u8]) -> u64 {
     match bytes_as_u64s(data) {
-        Err(data) => Some(count_ones_base_unsafe(data)),
-        Ok((pre_partial, data, post_partial)) => Some(
-            count_ones_base_unsafe(pre_partial) + count_ones_unsafe(<u64>::count_ones, data) +
-                count_ones_base_unsafe(post_partial),
-        ),
+        Err(data) => count_ones_bytes_slow(data),
+        Ok((pre_partial, data, post_partial)) => {
+            count_ones_bytes_slow(pre_partial) + count_ones_words(data) +
+                count_ones_bytes_slow(post_partial)
+        }
     }
 }
 
-pub fn count<W: OnesOrZeros>(data: &[u8]) -> Option<u64> {
-    count_ones(data).map(|count_ones| {
-        W::convert_count(count_ones, data.len() as u64 * 8)
-    })
+pub fn count<W: OnesOrZeros>(data: &[u8]) -> u64 {
+    W::convert_count(count_ones(data), data.len() as u64 * 8)
 }
 
 pub fn rank_ones(data: &[u8], idx_bits: u64) -> Option<u64> {
-    if idx_bits > MAX_BITS {
-        // Avoid overflow
+    let full_bytes = idx_bits / 8;
+    if full_bytes >= data.len() as u64 {
         return None;
     }
 
-    let full_bytes = (idx_bits / 8) as usize;
-
-    if full_bytes >= data.len() {
-        return None;
-    }
-
+    let full_bytes = full_bytes as usize;
     let rem = idx_bits % 8;
-    let full_bytes_count =
-        count_ones(&data[..full_bytes]).expect("Already checked for too-many-bits");
+    let full_bytes_count = count_ones(&data[..full_bytes]);
     let rem_count = (!((!0u8) >> rem) & data[full_bytes]).count_ones();
     Some(full_bytes_count + rem_count as u64)
 }
@@ -104,8 +93,8 @@ pub fn rank<W: OnesOrZeros>(data: &[u8], idx_bits: u64) -> Option<u64> {
     rank_ones(data, idx_bits).map(|count_ones| W::convert_count(count_ones, idx_bits))
 }
 
-// If it returns Err it returns the total count for the data
-fn select_base<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64> {
+/// If it returns Err it returns the total count for the data.
+fn select_by_bytes<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> result::Result<u64, u64> {
     let mut running_rank = 0u64;
     let mut running_index = 0u64;
 
@@ -129,14 +118,21 @@ fn select_base<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64
 }
 
 pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
-    let (pre_partial, data, post_partial) = match bytes_as_u64s(data) {
-        Err(data) => return select_base::<W>(data, target_rank).ok(),
-        Ok(x) => x,
+    let split_res = bytes_as_u64s(data);
+
+    let pre_partial = match split_res {
+        Err(data) => data,
+        Ok((pre, _, _)) => pre,
     };
 
-    let pre_partial_count = match select_base::<W>(pre_partial, target_rank) {
+    let pre_partial_count = match select_by_bytes::<W>(pre_partial, target_rank) {
         Ok(res) => return Some(res),
         Err(count) => count,
+    };
+
+    let (data, post_partial) = match split_res {
+        Err(_) => return None,
+        Ok((_, data, post)) => (data, post),
     };
 
     let mut running_rank = pre_partial_count;
@@ -154,7 +150,7 @@ pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
         running_index += 64;
     }
 
-    select_base::<W>(post_partial, target_rank - running_rank)
+    select_by_bytes::<W>(post_partial, target_rank - running_rank)
         .ok()
         .map(|sub_res| running_index + sub_res)
 }
@@ -199,8 +195,8 @@ mod tests {
                 count_zeros += byte.count_zeros() as u64;
             }
 
-            count::<OneBits>(&data) == Some(count_ones)
-                && count::<ZeroBits>(&data) == Some(count_zeros)
+            count::<OneBits>(&data) == count_ones
+                && count::<ZeroBits>(&data) == count_zeros
         }
     }
 
@@ -245,7 +241,7 @@ mod tests {
     }
 
     fn do_test_select<W: OnesOrZeros>(data: &Vec<u8>) {
-        let total_count = count::<W>(&data).unwrap() as usize;
+        let total_count = count::<W>(&data) as usize;
         for i in 0..total_count {
             let i = i as u64;
             let r = select::<W>(&data, i).expect("Already checked in-bounds");
