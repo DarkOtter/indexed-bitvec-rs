@@ -1,4 +1,13 @@
+//! This module contains the raw functions for the index rank
+//! and select operations, as well as building indexes.
+//!
+//! The functions here do minimal if any checking on the size
+//! or validity of indexes vs. the bitvectors they are used with,
+//! so you may run into panics from e.g. out of bounds accesses
+//! to slices. They should all be safe though.
+
 use super::{ceil_div, ceil_div_u64};
+use std::cmp::min;
 use bits_type::Bits;
 use ones_or_zeros::{OneBits, ZeroBits, OnesOrZeros};
 
@@ -96,10 +105,10 @@ impl From<L1L2Entry> for u64 {
 }
 
 impl L1L2Entry {
-    fn pack(base_rank: u32, sub_counts: [u16; 3]) -> Self {
+    fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
         L1L2Entry(
-            ((base_rank as u64) << 32) | ((sub_counts[0] as u64) << 32) |
-                ((sub_counts[1] as u64) << 32) | ((sub_counts[2] as u64) << 32),
+            ((base_rank as u64) << 32) | ((sub_counts[0] as u64) << 22) |
+                ((sub_counts[1] as u64) << 12) | ((sub_counts[2] as u64) << 2),
         )
     }
 
@@ -111,16 +120,9 @@ impl L1L2Entry {
         L1L2Entry(((base_rank as u64) << 32) | self.0 & 0xffffffff)
     }
 
-    fn sub_count_1(self) -> u64 {
-        (self.0 >> 22) & 0x3ff
-    }
-
-    fn sub_count_2(self) -> u64 {
-        (self.0 >> 12) & 0x3ff
-    }
-
-    fn sub_count_3(self) -> u64 {
-        self.0 & 0x3ff
+    fn sub_rank(self, i: usize) -> u64 {
+        let shift = 22 - i * 10;
+        (self.0 >> shift) & 0x3ff
     }
 }
 
@@ -142,9 +144,11 @@ fn build_inner_rank_index(index: &mut [u64], data: Bits<&[u8]>) -> u32 {
                     *write_to = chunk.count::<OneBits>() as u16
                 });
 
-            let total = counts.iter().map(|&c| c as u32).sum::<u32>();
+            for i in 1..counts.len() {
+                counts[i] += counts[i - 1];
+            }
 
-            *write_to = L1L2Entry::pack(total, [counts[0], counts[1], counts[2]]).into();
+            *write_to = L1L2Entry::pack(counts[3] as u32, [counts[0], counts[1], counts[2]]).into();
         });
 
     let mut running_total = 0u32;
@@ -214,21 +218,19 @@ fn select_with_inner_rank_index<W: OnesOrZeros>(
     let mut start_pos = l1_index * (size::BYTES_PER_BLOCK * 4);
     let mut offset_target = target_rank - index_entry_base_rank;
 
-    let sub_count_1 = W::convert_count(index_entry.sub_count_1(), size::BITS_PER_BLOCK) as u32;
-    if offset_target >= sub_count_1 {
-        start_pos += size::BYTES_PER_BLOCK;
-        offset_target -= sub_count_1;
-        let sub_count_2 = W::convert_count(index_entry.sub_count_2(), size::BITS_PER_BLOCK) as u32;
-        if offset_target >= sub_count_2 {
-            start_pos += size::BYTES_PER_BLOCK;
-            offset_target -= sub_count_2;
-            let sub_count_3 = W::convert_count(index_entry.sub_count_3(), size::BITS_PER_BLOCK) as
-                u32;
-            if offset_target >= sub_count_3 {
-                start_pos += size::BYTES_PER_BLOCK;
-                offset_target -= sub_count_3;
-            }
+    // TODO: Unroll this loop?
+    let mut sub_index = 3;
+    for i in 0..3 {
+        let sub_rank = W::convert_count(index_entry.sub_rank(i), i as u64 * size::BITS_PER_BLOCK);
+        if offset_target < sub_rank {
+            sub_index = i;
+            break;
         }
+    }
+
+    start_pos += sub_index as u64 * size::BYTES_PER_BLOCK;
+    if sub_index > 0 {
+        offset_target -= index_entry.sub_rank(sub_index - 1);
     }
 
     data.skip_bytes(start_pos)
@@ -344,10 +346,6 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
     Ok(())
 }
 
-/// This does not check the size of the index is correct,
-/// so you may get panics from slice indexing instead.
-///
-/// This is still memory safe, it just might be confusing.
 pub fn count_ones_unchecked(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     let l0_size = size::l0(bits.used_bits());
     if bits.used_bits() == 0 {
@@ -357,18 +355,10 @@ pub fn count_ones_unchecked(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     index[l0_size - 1]
 }
 
-/// This does not check the size of the index is correct,
-/// so you may get panics from slice indexing instead.
-///
-/// This is still memory safe, it just might be confusing.
 pub fn count_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     W::convert_count(count_ones_unchecked(index, bits), bits.used_bits())
 }
 
-/// This does not check the size of the index is correct,
-/// so you may get panics from slice indexing instead.
-///
-/// This is still memory safe, it just might be confusing.
 pub fn rank_ones_unchecked(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     if idx >= bits.used_bits() {
         return None;
@@ -406,18 +396,31 @@ pub fn rank_ones_unchecked(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option
     Some(l0_rank + l1_rank + l2_rank)
 }
 
-/// This does not check the size of the index is correct,
-/// so you may get panics from slice indexing instead.
-///
-/// This is still memory safe, it just might be confusing.
 pub fn rank_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     rank_ones_unchecked(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
 
-/// This does not check the size of the index is correct,
-/// so you may get panics from slice indexing instead.
-///
-/// This is still memory safe, it just might be confusing.
-pub fn select_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+pub fn select_unchecked<W: OnesOrZeros>(
+    index: &[u64],
+    bits: Bits<&[u8]>,
+    target_rank: u64,
+) -> Option<u64> {
+    let l0_size = size::l0(bits.used_bits());
+    let (l0_index, rest) = index.split_at(l0_size);
+
+    let l0_block_index = l0_index.iter().enumerate().position(|(i, &c)| {
+        let total = (i as u64 + 1) * size::BITS_PER_L0_BLOCK;
+        let total = min(total, bits.used_bits());
+        W::convert_count(c, total) > target_rank
+    });
+    let l0_block_index = match l0_block_index {
+        None => return None,
+        Some(i) => i,
+    };
+
+    let inner_index = &index[l0_size + l0_block_index * size::INNER_INDEX_SIZE..];
+    let inner_index = &inner_index[..min(inner_index.len(), size::INNER_INDEX_SIZE)];
+
+
     panic!("Not implemented")
 }
