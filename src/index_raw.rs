@@ -107,8 +107,8 @@ impl From<L1L2Entry> for u64 {
 impl L1L2Entry {
     fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
         L1L2Entry(
-            ((base_rank as u64) << 32) | ((sub_counts[0] as u64) << 22) |
-                ((sub_counts[1] as u64) << 12) | ((sub_counts[2] as u64) << 2),
+            ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
+                ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
         )
     }
 
@@ -400,6 +400,23 @@ pub fn rank_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64
     rank_ones_unchecked(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
 
+fn index_within<T: Sized>(slice: &[T], item: &T) -> Option<usize> {
+    use std::mem::size_of;
+
+    if size_of::<T>() == 0 {
+        return None;
+    };
+
+    let slice_start = (slice as *const T) as usize;
+    let item_pos = (item as *const T) as usize;
+    if item_pos < slice_start {
+        return None;
+    };
+
+    let idx = (item_pos - slice_start) / size_of::<T>();
+    if idx >= slice.len() { None } else { Some(idx) }
+}
+
 pub fn select_unchecked<W: OnesOrZeros>(
     index: &[u64],
     bits: Bits<&[u8]>,
@@ -408,6 +425,7 @@ pub fn select_unchecked<W: OnesOrZeros>(
     let l0_size = size::l0(bits.used_bits());
     let (l0_index, rest) = index.split_at(l0_size);
 
+    // TODO: This can be made into a binary search
     let l0_block_index = l0_index.iter().enumerate().position(|(i, &c)| {
         let total = (i as u64 + 1) * size::BITS_PER_L0_BLOCK;
         let total = min(total, bits.used_bits());
