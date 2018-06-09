@@ -89,42 +89,69 @@ mod size {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-struct L1L2Entry(u64);
+mod index_types {
+    use super::size;
 
-impl From<u64> for L1L2Entry {
-    fn from(i: u64) -> Self {
-        L1L2Entry(i)
+    #[derive(Copy, Clone, Debug)]
+    pub struct L1L2Entry(u64);
+    #[derive(Copy, Clone, Debug)]
+    pub struct InnerIndexRef<'a>(&'a [u64]);
+    #[derive(Copy, Clone, Debug)]
+    pub struct IndexRef<'a>(&'a [u64]);
+
+    impl L1L2Entry {
+        pub fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
+            L1L2Entry(
+                ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
+                    ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
+            )
+        }
+
+        pub fn base_rank(self) -> u64 {
+            self.0 >> 32
+        }
+
+        pub fn fset_base_rank(self, base_rank: u32) -> Self {
+            L1L2Entry(((base_rank as u64) << 32) | self.0 & 0xffffffff)
+        }
+
+        pub fn sub_rank(self, i: usize) -> u64 {
+            let shift = 22 - i * 10;
+            (self.0 >> shift) & 0x3ff
+        }
+    }
+
+    impl From<L1L2Entry> for u64 {
+        fn from(entry: L1L2Entry) -> Self {
+            entry.0
+        }
+    }
+
+    fn inner_split_idx(total_bits: u64) -> usize {
+        size::l1l2(total_bits)
+    }
+
+    fn cast_to_l1l2(data: &[u64]) -> &[L1L2Entry] {
+        use std::mem::{size_of, align_of};
+        debug_assert_eq!(size_of::<u64>(), size_of::<L1L2Entry>());
+        debug_assert_eq!(align_of::<u64>(), align_of::<L1L2Entry>());
+
+        unsafe {
+            use std::slice::from_raw_parts;
+            let n = data.len();
+            let ptr = data.as_ptr() as *const L1L2Entry;
+            from_raw_parts(ptr, n)
+        }
+    }
+
+    impl<'a> InnerIndexRef<'a> {
+        pub fn rank_part(self, total_bits: u64) -> &'a [L1L2Entry] {
+            cast_to_l1l2(&self.0[..inner_split_idx(total_bits)])
+        }
     }
 }
 
-impl From<L1L2Entry> for u64 {
-    fn from(packed: L1L2Entry) -> Self {
-        packed.0
-    }
-}
-
-impl L1L2Entry {
-    fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
-        L1L2Entry(
-            ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
-                ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
-        )
-    }
-
-    fn base_rank(self) -> u64 {
-        self.0 >> 32
-    }
-
-    fn set_base_rank(self, base_rank: u32) -> Self {
-        L1L2Entry(((base_rank as u64) << 32) | self.0 & 0xffffffff)
-    }
-
-    fn sub_rank(self, i: usize) -> u64 {
-        let shift = 22 - i * 10;
-        (self.0 >> shift) & 0x3ff
-    }
-}
+/*
 
 /// Returns the total set bit count
 fn build_inner_rank_index(index: &mut [u64], data: Bits<&[u8]>) -> u32 {
@@ -442,3 +469,5 @@ pub fn select_unchecked<W: OnesOrZeros>(
 
     panic!("Not implemented")
 }
+
+*/
