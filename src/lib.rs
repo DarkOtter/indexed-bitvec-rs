@@ -15,7 +15,10 @@ fn ceil_div_slow(n: usize, d: usize) -> usize {
 #[inline(always)]
 pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
     let nb = n.wrapping_add(d - 1);
-    if n < nb { nb / d } else { ceil_div_slow(n, d) }
+    if nb < n {
+        return ceil_div_slow(n, d);
+    };
+    nb / d
 }
 
 #[cold]
@@ -26,11 +29,10 @@ fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
 #[inline(always)]
 pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
     let nb = n.wrapping_add(d - 1);
-    if n < nb {
-        nb / d
-    } else {
-        ceil_div_u64_slow(n, d)
-    }
+    if nb < n {
+        return ceil_div_u64_slow(n, d);
+    };
+    nb / d
 }
 
 pub mod ones_or_zeros;

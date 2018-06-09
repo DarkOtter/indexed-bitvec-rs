@@ -12,7 +12,7 @@ use bits_type::Bits;
 use ones_or_zeros::{OneBits, ZeroBits, OnesOrZeros};
 
 mod size {
-    use super::ceil_div_u64;
+    use super::*;
 
     pub const BITS_PER_L0_BLOCK: u64 = 1 << 32;
     pub const BITS_PER_BLOCK: u64 = 512;
@@ -89,8 +89,8 @@ mod size {
     }
 }
 
-mod index_types {
-    use super::size;
+mod structure_types {
+    use super::*;
 
     #[derive(Copy, Clone, Debug)]
     pub struct L1L2Entry(u64);
@@ -144,9 +144,34 @@ mod index_types {
         }
     }
 
+    fn cast_to_u32(data: &[u64]) -> &[u32] {
+        use std::mem::{size_of, align_of};
+        debug_assert_eq!(size_of::<u64>(), 2 * size_of::<u32>());
+        debug_assert_eq!(align_of::<u64>(), 2 * align_of::<u32>());
+
+        unsafe {
+            use std::slice::from_raw_parts;
+            let n = data.len() * 2;
+            let ptr = data.as_ptr() as *const u32;
+            from_raw_parts(ptr, n)
+        }
+    }
+
     impl<'a> InnerIndexRef<'a> {
         pub fn rank_part(self, total_bits: u64) -> &'a [L1L2Entry] {
             cast_to_l1l2(&self.0[..inner_split_idx(total_bits)])
+        }
+
+        pub fn select_part_ones(self, total_bits: u64, count_ones: u64) -> &'a [u32] {
+            let inner_split_idx = inner_split_idx(total_bits);
+            let ones_length = ceil_div_u64(count_ones, size::SAMPLE_LENGTH * 2) as usize;
+            cast_to_u32(&self.0[inner_split_idx..inner_split_idx + ones_length])
+        }
+
+        pub fn select_part_zeros(self, total_bits: u64, count_ones: u64) -> &'a [u32] {
+            let inner_split_idx = inner_split_idx(total_bits);
+            let ones_length = ceil_div_u64(count_ones, size::SAMPLE_LENGTH * 2) as usize;
+            cast_to_u32(&self.0[inner_split_idx + ones_length..])
         }
     }
 }
