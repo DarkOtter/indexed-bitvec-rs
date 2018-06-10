@@ -19,7 +19,7 @@
 //! The functions here do minimal if any checking on the size
 //! or validity of indexes vs. the bitvectors they are used with,
 //! so you may run into panics from e.g. out of bounds accesses
-//! to slices. They should all be safe though.
+//! to slices. They should all be memory-safe though.
 
 use super::ceil_div_u64;
 use bits_type::Bits;
@@ -370,7 +370,7 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
     Ok(())
 }
 
-pub fn count_ones_unchecked(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     if bits.used_bits() == 0 {
         return 0;
     }
@@ -379,12 +379,12 @@ pub fn count_ones_unchecked(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     index[l0_size - 1]
 }
 
-pub fn count_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
-    W::convert_count(count_ones_unchecked(index, bits), bits.used_bits())
+pub fn count<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+    W::convert_count(count_ones(index, bits), bits.used_bits())
 }
 
 
-pub fn rank_ones_unchecked(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     if idx >= bits.used_bits() {
         return None;
     } else if idx == 0 {
@@ -441,8 +441,8 @@ pub fn rank_ones_unchecked(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option
     )
 }
 
-pub fn rank_unchecked<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
-    rank_ones_unchecked(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
+pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+    rank_ones(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
 
 /*
