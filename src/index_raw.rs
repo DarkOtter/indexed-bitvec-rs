@@ -22,6 +22,7 @@
 //! to slices. They should all be memory-safe though.
 
 use super::ceil_div_u64;
+use std::cmp::min;
 use bits_type::Bits;
 use ones_or_zeros::{OneBits, OnesOrZeros};
 
@@ -52,12 +53,22 @@ mod size {
 
     pub const SAMPLE_LENGTH: u64 = 8192;
 
+    /// e.g. if we have N one bits, how many words for the ones samples?
+    pub fn sample_words_for_matching_bits(matching_bitcount: u64) -> usize {
+        ceil_div_u64(matching_bitcount, SAMPLE_LENGTH * 2) as usize
+    }
+    /// If we have N one and zero bits,
+    /// how many words for ones and zeros samples together?
     pub fn sample_words(total_bits: u64) -> usize {
-        ceil_div_u64(total_bits, SAMPLE_LENGTH * 2) as usize + l0(total_bits)
+        sample_words_for_matching_bits(total_bits) + l0(total_bits)
     }
 
     pub fn total_index_words(total_bits: u64) -> usize {
         rank_index(total_bits) + sample_words(total_bits)
+    }
+
+    pub fn inner_index(total_bits: u64) -> usize {
+        l1l2(total_bits) + sample_words(total_bits)
     }
 
     pub const INNER_INDEX_L1L2_SIZE: usize = (BITS_PER_L0_BLOCK / BITS_PER_SUPERBLOCK) as usize;
@@ -393,6 +404,11 @@ pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
 
     let l0_size = size::l0(bits.used_bits()) as usize;
     let (l0_index, inner_indexes) = index.split_at(l0_size);
+
+    // Disallow future use of index by shadowing
+    #[allow(unused_variables)]
+    let index = ();
+
     let l0_idx = idx / size::BITS_PER_L0_BLOCK;
     debug_assert!(l0_idx < l0_size as u64);
 
@@ -413,6 +429,10 @@ pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
         &inner_indexes[inner_index_start..inner_index_start + inner_l1l2_size]
     };
     let l0_offset = idx % size::BITS_PER_L0_BLOCK;
+
+    // Disallow future use of inner_indexes by shadowing
+    #[allow(unused_variables)]
+    let inner_indexes = ();
 
     let block_idx = (l0_offset / size::BITS_PER_BLOCK) as usize;
     let block_offset = l0_offset % size::BITS_PER_BLOCK;
@@ -445,8 +465,6 @@ pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Optio
     rank_ones(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
 
-/*
-
 fn index_within<T: Sized>(slice: &[T], item: &T) -> Option<usize> {
     use std::mem::size_of;
 
@@ -454,7 +472,7 @@ fn index_within<T: Sized>(slice: &[T], item: &T) -> Option<usize> {
         return None;
     };
 
-    let slice_start = (slice as *const T) as usize;
+    let slice_start = (slice.as_ptr() as *const T) as usize;
     let item_pos = (item as *const T) as usize;
     if item_pos < slice_start {
         return None;
@@ -464,30 +482,114 @@ fn index_within<T: Sized>(slice: &[T], item: &T) -> Option<usize> {
     if idx >= slice.len() { None } else { Some(idx) }
 }
 
-pub fn select_unchecked<W: OnesOrZeros>(
-    index: &[u64],
-    bits: Bits<&[u8]>,
-    target_rank: u64,
-) -> Option<u64> {
-    let l0_size = size::l0(bits.used_bits());
-    let (l0_index, rest) = index.split_at(l0_size);
+pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
+    if target_rank >= count::<W>(index, bits) {
+        return None;
+    }
 
-    // TODO: This can be made into a binary search
-    let l0_block_index = l0_index.iter().enumerate().position(|(i, &c)| {
-        let total = (i as u64 + 1) * size::BITS_PER_L0_BLOCK;
-        let total = min(total, bits.used_bits());
-        W::convert_count(c, total) > target_rank
-    });
-    let l0_block_index = match l0_block_index {
-        None => return None,
-        Some(i) => i,
+    let l0_size = size::l0(bits.used_bits()) as usize;
+    let (l0_index, inner_indexes) = index.split_at(l0_size);
+
+    // Disallow future use of index by shadowing
+    #[allow(unused_variables)]
+    let index = ();
+
+    // slice library does not specify which this returns if
+    // there are multiple equal counts, so it's just a hint
+    let l0_idx_hint = {
+        if l0_index.len() > 16 {
+            let search_for = target_rank + 1;
+            let res = l0_index.binary_search_by_key(&search_for, |count_ref| {
+                let idx = index_within(l0_index, count_ref).unwrap();
+                W::convert_count(*count_ref, (idx as u64 + 1) * size::BITS_PER_L0_BLOCK)
+            });
+            match res {
+                Ok(i) => i,
+                Err(i) => i,
+            }
+        } else {
+            l0_index.len() - 1
+        }
     };
 
-    let inner_index = &index[l0_size + l0_block_index * size::INNER_INDEX_SIZE..];
-    let inner_index = &inner_index[..min(inner_index.len(), size::INNER_INDEX_SIZE)];
+    let mut l0_idx = l0_idx_hint;
+    debug_assert!(l0_idx < l0_index.len());
+    debug_assert!(
+        W::convert_count(
+            l0_index[l0_idx],
+            (l0_idx as u64 + 1) * size::BITS_PER_L0_BLOCK,
+        ) > target_rank
+    );
+    while l0_idx > 0 &&
+        W::convert_count(
+            l0_index[l0_idx - 1],
+            l0_idx as u64 * size::BITS_PER_L0_BLOCK,
+        ) > target_rank
+    {
+        l0_idx -= 1;
+    }
+    let l0_idx = l0_idx;
+    let l0_block_rank_ones = if l0_idx > 0 { l0_index[l0_idx - 1] } else { 0 };
+    let l0_block_count_ones = l0_index[l0_idx] - l0_block_rank_ones;
+    let bits_before_l0_block = l0_idx as u64 * size::BITS_PER_L0_BLOCK;
+    let l0_block_bits = min(
+        bits.used_bits() - bits_before_l0_block,
+        size::BITS_PER_L0_BLOCK,
+    );
+    let l0_block_rank = W::convert_count(l0_block_rank_ones, bits_before_l0_block);
+    debug_assert!(l0_block_rank <= target_rank);
+    let l0_block_target_rank = target_rank - l0_block_rank;
 
+    let l1l2_size = size::l1l2(l0_block_bits);
+    let inner_index_start = l0_idx as usize * size::INNER_INDEX_SIZE;
+    let inner_index_l1l2 = &inner_indexes[inner_index_start..inner_index_start + l1l2_size];
+    let inner_index_samples = {
+        let ones_samples_size = size::sample_words_for_matching_bits(l0_block_count_ones);
+        let ones_start = inner_index_start + l1l2_size;
+        let zeros_start = ones_start + ones_samples_size;
+        if W::is_ones() {
+            &inner_indexes[ones_start..zeros_start]
+        } else {
+            let zeros_samples_size =
+                size::sample_words_for_matching_bits(l0_block_bits - l0_block_count_ones);
+            &inner_indexes[zeros_start..zeros_start + zeros_samples_size]
+        }
+    };
+    let inner_index_samples = cast_to_u32(inner_index_samples);
 
-    panic!("Not implemented")
+    // Disallow future use of inner_indexes by shadowing
+    #[allow(unused_variables)]
+    let inner_indexes = ();
+
+    let sample_idx = (l0_block_target_rank / size::SAMPLE_LENGTH) as usize;
+    let superblock_idx = inner_index_samples[sample_idx] as usize;
+    let l1l2_entry = L1L2Entry::from(inner_index_l1l2[superblock_idx]);
+
+    let bits_before_superblock = superblock_idx as u64 * size::BITS_PER_SUPERBLOCK;
+    let superblock_rank = W::convert_count(l1l2_entry.base_rank(), bits_before_superblock);
+    let superblock_target_rank = l0_block_target_rank - superblock_rank;
+
+    let mut bits_before_lower_block = 0;
+    let mut lower_block_rank = 0;
+
+    for i in (0..3).rev() {
+        let bits_before = (i + 1) as u64 * size::BITS_PER_BLOCK;
+        let sub_rank = W::convert_count(l1l2_entry.sub_rank(i), bits_before);
+        if sub_rank <= superblock_target_rank {
+            bits_before_lower_block = bits_before_lower_block;
+            lower_block_rank = sub_rank;
+            break;
+        }
+    }
+
+    let final_search_target_rank = superblock_target_rank - lower_block_rank;
+    let bits_before_final_search = bits_before_l0_block + bits_before_superblock +
+        bits_before_lower_block;
+    debug_assert_eq!(bits_before_l0_block % 8, 0);
+    let bytes_before_final_search = (bits_before_final_search / 8) as usize;
+    let bits_for_final_search = bits.skip_bytes(bytes_before_final_search);
+
+    bits_for_final_search
+        .select::<W>(final_search_target_rank)
+        .map(|res| res + bits_before_final_search)
 }
-
-*/
