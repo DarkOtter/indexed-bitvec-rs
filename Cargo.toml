@@ -2,6 +2,7 @@
 name = "indexed_bitvec"
 version = "0.1.0"
 authors = ["DarkOtter <>"]
+license = "Apache-2.0"
 
 [dependencies]
 byteorder = "1"
