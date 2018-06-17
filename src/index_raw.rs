@@ -249,6 +249,7 @@ where
     );
 
     debug_assert!(chosen_superblock_idxs.clone().count() <= select_index.len());
+    debug_assert!(chosen_superblock_idxs.clone().count() + 3 >= select_index.len());
 
     for (superblock_idx, write_to) in chosen_superblock_idxs.zip(select_index.iter_mut()) {
         *write_to = superblock_idx;
@@ -473,9 +474,6 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
     let l0_size = size::l0(bits.used_bits()) as usize;
     let (l0_index, inner_indexes) = index.split_at(l0_size);
 
-    // Disallow future use of index by shadowing
-    #[allow(unused_variables)]
-    let index = ();
 
     // slice library does not specify which this returns if
     // there are multiple equal counts, so it's just a hint
@@ -540,10 +538,6 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
     };
     let inner_index_samples = cast_to_u32(inner_index_samples);
 
-    // Disallow future use of inner_indexes by shadowing
-    #[allow(unused_variables)]
-    let inner_indexes = ();
-
     let sample_idx = (l0_block_target_rank / size::SAMPLE_LENGTH) as usize;
     let superblock_idx = inner_index_samples[sample_idx] as usize;
     let l1l2_entry = L1L2Entry::from(inner_index_l1l2[superblock_idx]);
@@ -559,7 +553,7 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
         let bits_before = (i + 1) as u64 * size::BITS_PER_BLOCK;
         let sub_rank = W::convert_count(l1l2_entry.sub_rank(i), bits_before);
         if sub_rank <= superblock_target_rank {
-            bits_before_lower_block = bits_before_lower_block;
+            bits_before_lower_block = bits_before;
             lower_block_rank = sub_rank;
             break;
         }
