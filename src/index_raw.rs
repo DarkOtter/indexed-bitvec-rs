@@ -613,11 +613,34 @@ mod tests {
         assert_eq!(None, rank::<OneBits>(&index, data, n_bits));
         assert_eq!(None, rank::<ZeroBits>(&index, data, n_bits));
 
-        let rank_idxs: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, n_bits)).collect();
+        let rank_idxs = {
+            let mut idxs: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, n_bits)).collect();
+            idxs.sort();
+            idxs
+        };
         for idx in rank_idxs {
             assert_eq!(data.rank::<OneBits>(idx), rank::<OneBits>(&index, data, idx));
             assert_eq!(data.rank::<ZeroBits>(idx), rank::<ZeroBits>(&index, data, idx));
         }
 
+        assert_eq!(None, select::<OneBits>(&index, data, count_ones));
+        let one_ranks = {
+            let mut ranks: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, count_ones)).collect();
+            ranks.sort();
+            ranks
+        };
+        for rank in one_ranks {
+            assert_eq!(data.select::<OneBits>(rank), select::<OneBits>(&index, data, rank));
+        }
+
+        assert_eq!(None, select::<ZeroBits>(&index, data, count_zeros));
+        let zero_ranks = {
+            let mut ranks: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, count_zeros)).collect();
+            ranks.sort();
+            ranks
+        };
+        for rank in zero_ranks {
+            assert_eq!(data.select::<ZeroBits>(rank), select::<ZeroBits>(&index, data, rank));
+        }
     }
 }

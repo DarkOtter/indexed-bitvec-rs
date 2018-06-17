@@ -194,7 +194,6 @@ mod tests {
         assert_eq!(0, make(0).count::<ZeroBits>());
     }
 
-    // TODO Add more properties to tests, e.g. rank(i) <= i, >= n_set - (n_bits - i)
     #[test]
     fn test_rank() {
         let pattern_a = [0xff, 0xaau8];
@@ -224,5 +223,23 @@ mod tests {
         let make = |len: u64| Bits::from(bytes_a, len).expect("valid");
         assert_eq!(Some(14), make(16).select::<OneBits>(11));
         assert_eq!(None, make(14).select::<OneBits>(11));
+    }
+
+    quickcheck! {
+        fn fuzz_test(bits: Bits<Box<[u8]>>) -> () {
+            let mut running_rank_ones = 0;
+            let mut running_rank_zeros = 0;
+            for idx in 0..bits.used_bits() {
+                assert_eq!(Some(running_rank_ones), bits.rank::<OneBits>(idx));
+                assert_eq!(Some(running_rank_zeros), bits.rank::<ZeroBits>(idx));
+                if bits.get(idx).unwrap() {
+                    assert_eq!(Some(idx), bits.select::<OneBits>(running_rank_ones));
+                    running_rank_ones += 1;
+                } else {
+                    assert_eq!(Some(idx), bits.select::<ZeroBits>(running_rank_zeros));
+                    running_rank_zeros += 1;
+                }
+            }
+        }
     }
 }
