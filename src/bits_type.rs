@@ -194,6 +194,7 @@ mod tests {
         assert_eq!(0, make(0).count::<ZeroBits>());
     }
 
+    // TODO Add more properties to tests, e.g. rank(i) <= i, >= n_set - (n_bits - i)
     #[test]
     fn test_rank() {
         let pattern_a = [0xff, 0xaau8];

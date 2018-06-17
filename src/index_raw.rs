@@ -67,10 +67,6 @@ mod size {
         rank_index(total_bits) + sample_words(total_bits)
     }
 
-    pub fn inner_index(total_bits: u64) -> usize {
-        l1l2(total_bits) + sample_words(total_bits)
-    }
-
     pub const INNER_INDEX_L1L2_SIZE: usize = (BITS_PER_L0_BLOCK / BITS_PER_SUPERBLOCK) as usize;
     pub const INNER_INDEX_SIZE: usize = INNER_INDEX_L1L2_SIZE +
         (BITS_PER_L0_BLOCK / (SAMPLE_LENGTH * 2) + 1) as usize;
@@ -121,19 +117,6 @@ mod size {
 
 #[derive(Copy, Clone, Debug)]
 struct L1L2Entry(u64);
-
-fn cast_to_l1l2<'a>(data: &'a [u64]) -> &'a [L1L2Entry] {
-    use std::mem::{size_of, align_of};
-    debug_assert_eq!(size_of::<u64>(), size_of::<L1L2Entry>());
-    debug_assert_eq!(align_of::<u64>(), align_of::<L1L2Entry>());
-
-    unsafe {
-        use std::slice::from_raw_parts;
-        let n = data.len();
-        let ptr = data.as_ptr() as *const L1L2Entry;
-        from_raw_parts(ptr, n)
-    }
-}
 
 fn cast_to_l1l2_mut<'a>(data: &'a mut [u64]) -> &'a mut [L1L2Entry] {
     use std::mem::{size_of, align_of};
@@ -592,4 +575,49 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
     bits_for_final_search
         .select::<W>(final_search_target_rank)
         .map(|res| res + bits_before_final_search)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::ceil_div_u64;
+    use quickcheck;
+    use quickcheck::Arbitrary;
+    use ones_or_zeros::{OneBits, ZeroBits};
+
+    #[test]
+    fn small_indexed_tests() {
+        use rand::{Rng, SeedableRng, XorShiftRng};
+        let n_bits: u64 = (1 << 19) - 1;
+        let n_bytes: usize = ceil_div_u64(n_bits, 8) as usize;
+        let seed = [42, 349107693, 17273721493, 135691827498];
+        let mut rng = XorShiftRng::from_seed(seed);
+        let data = {
+            let mut data = vec![0u8; n_bytes];
+            rng.fill_bytes(&mut data);
+            data
+        };
+        let data = Bits::from(data, n_bits).expect("Should have enough bytes");
+        let data = data.clone_ref();
+        let index = {
+            let mut index = vec![0u64; index_size_for(data)];
+            build_index_for(data, &mut index);
+            index
+        };
+
+        let count_ones = data.count::<OneBits>();
+        let count_zeros = n_bits - count_ones;
+        assert_eq!(count_ones, count::<OneBits>(&index, data));
+        assert_eq!(count_zeros, count::<ZeroBits>(&index, data));
+
+        assert_eq!(None, rank::<OneBits>(&index, data, n_bits));
+        assert_eq!(None, rank::<ZeroBits>(&index, data, n_bits));
+
+        let rank_idxs: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, n_bits)).collect();
+        for idx in rank_idxs {
+            assert_eq!(data.rank::<OneBits>(idx), rank::<OneBits>(&index, data, idx));
+            assert_eq!(data.rank::<ZeroBits>(idx), rank::<ZeroBits>(&index, data, idx));
+        }
+
+    }
 }
