@@ -135,13 +135,13 @@ mod structure {
     pub struct SampleEntry(u32);
 
     impl SampleEntry {
-        pub fn pack(idx_in_l0_block: u64) -> Self {
-            debug_assert!(idx_in_l0_block <= u32::max_value() as u64);
-            SampleEntry(idx_in_l0_block as u32)
+        pub fn pack(block_idx_in_l0_block: usize) -> Self {
+            debug_assert!(block_idx_in_l0_block <= u32::max_value() as usize);
+            SampleEntry(block_idx_in_l0_block as u32)
         }
 
-        pub fn idx_in_l0_block(self) -> u64 {
-            self.0 as u64
+        pub fn block_idx_in_l0_block(self) -> usize {
+            self.0 as usize
         }
     }
 
@@ -414,23 +414,6 @@ pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Optio
     rank_ones(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
 
-fn index_within<T: Sized>(slice: &[T], item: &T) -> Option<usize> {
-    use std::mem::size_of;
-
-    if size_of::<T>() == 0 {
-        return None;
-    };
-
-    let slice_start = (slice.as_ptr() as *const T) as usize;
-    let item_pos = (item as *const T) as usize;
-    if item_pos < slice_start {
-        return None;
-    };
-
-    let idx = (item_pos - slice_start) / size_of::<T>();
-    if idx >= slice.len() { None } else { Some(idx) }
-}
-
 /// Assumes that for some i s.t. from <= i < until: check(j) <=> j >= i
 /// This returns such i.
 fn binary_search<F>(from: usize, until: usize, check: F) -> usize
@@ -492,7 +475,7 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
             // Sample is from the previous l0 block
             0
         } else {
-            (select_samples[sample_idx as usize].idx_in_l0_block() / size::BITS_PER_L2_BLOCK) as usize
+            select_samples[sample_idx as usize].block_idx_in_l0_block()
         }
     };
     let block_idx_should_be_less_than = {
@@ -505,7 +488,7 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
             // Sample does not exist
             inner_l1l2_index.len() * 4
         } else {
-            (select_samples[next_sample_idx as usize].idx_in_l0_block() / size::BITS_PER_L2_BLOCK) as usize
+            select_samples[next_sample_idx as usize].block_idx_in_l0_block()
         }
     };
 
