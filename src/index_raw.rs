@@ -62,6 +62,7 @@ mod size {
     }
 
     pub const L1_BLOCKS_PER_L0_BLOCK: usize = (BITS_PER_L0_BLOCK / BITS_PER_L1_BLOCK) as usize;
+    pub const L2_BLOCKS_PER_L1_BLOCK: usize = (BITS_PER_L1_BLOCK / BITS_PER_L2_BLOCK) as usize;
 
     #[cfg(test)]
     mod tests {
@@ -84,6 +85,12 @@ mod size {
         }
 
         #[test]
+        fn block_sizes_evenly_divide() {
+            assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L1_BLOCK, 0);
+            assert_eq!(BITS_PER_L1_BLOCK % BITS_PER_L2_BLOCK, 0);
+        }
+
+        #[test]
         fn sample_size_larger_than_l1() {
             // This is needed as we assume only one sample can be in each L1 block
             assert!(SAMPLE_LENGTH >= BITS_PER_L1_BLOCK);
@@ -91,49 +98,53 @@ mod size {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-struct L1L2Entry(u64);
-
-impl L1L2Entry {
-    fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
-        L1L2Entry(
-            ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
-                ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
-        )
-    }
-
-    fn base_rank(self) -> u64 {
-        self.0 >> 32
-    }
-
-    fn fset_base_rank(self, base_rank: u32) -> Self {
-        L1L2Entry(((base_rank as u64) << 32) | self.0 & 0xffffffff)
-    }
-
-    fn set_base_rank(&mut self, base_rank: u32) {
-        *self = self.fset_base_rank(base_rank);
-    }
-
-    fn sub_rank(self, i: usize) -> u64 {
-        let shift = 22 - i * 10;
-        (self.0 >> shift) & 0x3ff
-    }
-}
-
-impl From<u64> for L1L2Entry {
-    fn from(i: u64) -> Self {
-        L1L2Entry(i)
-    }
-}
-
-impl From<L1L2Entry> for u64 {
-    fn from(entry: L1L2Entry) -> Self {
-        entry.0
-    }
-}
-
-mod unpack {
+mod structure {
     use super::*;
+
+    #[derive(Copy, Clone, Debug)]
+    pub struct L1L2Entry(u64);
+
+    impl L1L2Entry {
+        pub fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
+            debug_assert!(sub_ranks.iter().all(|&x| (x & !0x03FF) == 0));
+            L1L2Entry(
+                ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
+                ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
+            )
+        }
+
+        pub fn base_rank(self) -> u64 {
+            self.0 >> 32
+        }
+
+        fn fset_base_rank(self, base_rank: u32) -> Self {
+            L1L2Entry(((base_rank as u64) << 32) | self.0 & 0xffffffff)
+        }
+
+        pub fn set_base_rank(&mut self, base_rank: u32) {
+            *self = self.fset_base_rank(base_rank);
+        }
+
+        pub fn sub_rank(self, i: usize) -> u64 {
+            let shift = 22 - i * 10;
+            (self.0 >> shift) & 0x3ff
+        }
+    }
+
+    #[derive(Copy, Clone, Debug)]
+    pub struct SampleEntry(u32);
+
+    impl SampleEntry {
+        pub fn pack(idx_in_l0_block: u64) -> Self {
+            debug_assert!(idx_in_l0_block <= u32::max_value() as u64);
+            SampleEntry(idx_in_l0_block as u32)
+        }
+
+        pub fn idx_in_l0_block(self) -> u64 {
+            self.0 as u64
+        }
+    }
+
 
     fn cast_to_l1l2<'a>(data: &'a [u64]) -> &'a [L1L2Entry] {
         use std::mem::{size_of, align_of};
@@ -161,28 +172,28 @@ mod unpack {
         }
     }
 
-    fn cast_to_u32<'a>(data: &'a [u64]) -> &'a [u32] {
+    fn cast_to_samples<'a>(data: &'a [u64]) -> &'a [SampleEntry] {
         use std::mem::{size_of, align_of};
-        debug_assert_eq!(size_of::<u64>(), 2 * size_of::<u32>());
-        debug_assert_eq!(align_of::<u64>(), 2 * align_of::<u32>());
+        debug_assert_eq!(size_of::<u64>(), 2 * size_of::<SampleEntry>());
+        debug_assert_eq!(align_of::<u64>(), 2 * align_of::<SampleEntry>());
 
         unsafe {
             use std::slice::from_raw_parts;
             let n = data.len() * 2;
-            let ptr = data.as_ptr() as *const u32;
+            let ptr = data.as_ptr() as *const SampleEntry;
             from_raw_parts(ptr, n)
         }
     }
 
-    fn cast_to_u32_mut<'a>(data: &'a mut [u64]) -> &'a mut [u32] {
+    fn cast_to_samples_mut<'a>(data: &'a mut [u64]) -> &'a mut [SampleEntry] {
         use std::mem::{size_of, align_of};
-        debug_assert_eq!(size_of::<u64>(), 2 * size_of::<u32>());
-        debug_assert_eq!(align_of::<u64>(), 2 * align_of::<u32>());
+        debug_assert_eq!(size_of::<u64>(), 2 * size_of::<SampleEntry>());
+        debug_assert_eq!(align_of::<u64>(), 2 * align_of::<SampleEntry>());
 
         unsafe {
             use std::slice::from_raw_parts_mut;
             let n = data.len() * 2;
-            let ptr = data.as_mut_ptr() as *mut u32;
+            let ptr = data.as_mut_ptr() as *mut SampleEntry;
             from_raw_parts_mut(ptr, n)
         }
     }
@@ -206,8 +217,8 @@ mod unpack {
         (cast_to_l1l2_mut(l1l2), other)
     }
 
-    pub fn split_samples<'a>(index_after_l1l2: &'a [u64], data: Bits<&[u8]>, count_ones: u64) -> (&'a [u32], &'a [u32]) {
-        let all_samples = cast_to_u32(index_after_l1l2);
+    pub fn split_samples<'a>(index_after_l1l2: &'a [u64], data: Bits<&[u8]>, count_ones: u64) -> (&'a [SampleEntry], &'a [SampleEntry]) {
+        let all_samples = cast_to_samples(index_after_l1l2);
         let n_samples_ones = size::samples_for_bits(count_ones);
         let n_samples_zeros = size::samples_for_bits(data.used_bits() - count_ones);
         let (ones_samples, other_samples) = all_samples.split_at(n_samples_ones);
@@ -215,8 +226,8 @@ mod unpack {
         (ones_samples, zeros_samples)
     }
 
-    pub fn split_samples_mut<'a>(index_after_l1l2: &'a mut [u64], data: Bits<&[u8]>, count_ones: u64) -> (&'a mut [u32], &'a mut [u32]) {
-        let all_samples = cast_to_u32_mut(index_after_l1l2);
+    pub fn split_samples_mut<'a>(index_after_l1l2: &'a mut [u64], data: Bits<&[u8]>, count_ones: u64) -> (&'a mut [SampleEntry], &'a mut [SampleEntry]) {
+        let all_samples = cast_to_samples_mut(index_after_l1l2);
         let n_samples_ones = size::samples_for_bits(count_ones);
         let n_samples_zeros = size::samples_for_bits(data.used_bits() - count_ones);
         let (ones_samples, other_samples) = all_samples.split_at_mut(n_samples_ones);
@@ -230,6 +241,7 @@ mod unpack {
         &l1l2_index[start_idx..end_idx]
     }
 }
+use self::structure::{L1L2Entry, SampleEntry};
 
 /// You need this many u64s for the index for these bits.
 /// This calculation is O(1) (maths based on the number of bits).
@@ -255,8 +267,8 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
         return Ok(());
     }
 
-    let (l0_index, index_after_l0) = unpack::split_l0_mut(into, bits);
-    let (l1l2_index, index_after_l1l2) = unpack::split_l1l2_mut(index_after_l0, bits);
+    let (l0_index, index_after_l0) = structure::split_l0_mut(into, bits);
+    let (l1l2_index, index_after_l1l2) = structure::split_l1l2_mut(index_after_l0, bits);
 
     // Build the L1L2 index, and get the L0 block bitcounts
     bits.chunks_bytes(size::BYTES_PER_L0_BLOCK)
@@ -278,7 +290,7 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
 
     // Build the select index
     let (samples_ones, samples_zeros) =
-        unpack::split_samples_mut(index_after_l1l2, bits, total_count_ones);
+        structure::split_samples_mut(index_after_l1l2, bits, total_count_ones);
     build_samples::<OneBits>(l0_index, l1l2_index, bits, samples_ones);
     build_samples::<ZeroBits>(l0_index, l1l2_index, bits, samples_zeros);
 
@@ -321,7 +333,7 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
     running_total
 }
 
-fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bits: Bits<&[u8]>, samples: &mut [u32]) {
+fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bits: Bits<&[u8]>, samples: &mut [SampleEntry]) {
     // TODO: Unimplemented
     unimplemented!();
 }
@@ -339,6 +351,32 @@ pub fn count<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     W::convert_count(count_ones(index, bits), bits.used_bits())
 }
 
+fn read_l0_cumulative_count<W: OnesOrZeros>(l0_index: &[u64], bits: Bits<&[u8]>, idx: usize) -> u64 {
+    let count_ones = l0_index[idx];
+    let total_count = if idx + 1 < l0_index.len() {
+        (idx as u64 + 1) * size::BITS_PER_L0_BLOCK
+    } else {
+        bits.used_bits()
+    };
+    W::convert_count(count_ones, total_count)
+}
+
+fn read_l0_rank<W: OnesOrZeros>(l0_index: &[u64], bits: Bits<&[u8]>, idx: usize) -> u64 {
+    if idx > 0 {
+        read_l0_cumulative_count::<W>(l0_index, bits, idx - 1)
+    } else {
+        0
+    }
+}
+
+fn read_l1l2_rank<W: OnesOrZeros>(inner_l1l2_index: &[L1L2Entry], block_idx: usize) -> u64 {
+    let l1_idx = block_idx / size::L2_BLOCKS_PER_L1_BLOCK;
+    let l2_idx = block_idx % size::L2_BLOCKS_PER_L1_BLOCK;
+    let entry = inner_l1l2_index[l1_idx];
+    let l1_rank_ones = entry.base_rank();
+    let l2_rank_ones = if l2_idx > 0 { entry.sub_rank(l2_idx - 1) } else { 0 };
+    W::convert_count(l1_rank_ones + l2_rank_ones, block_idx as u64 * size::BITS_PER_L2_BLOCK)
+}
 
 pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     if idx >= bits.used_bits() {
@@ -347,44 +385,29 @@ pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
         return Some(0);
     }
 
-    let (l0_index, index_after_l0) = unpack::split_l0(index, bits);
+    let (l0_index, index_after_l0) = structure::split_l0(index, bits);
 
     let l0_idx = idx / size::BITS_PER_L0_BLOCK;
     debug_assert!(l0_idx < l0_index.len() as u64);
     let l0_idx = l0_idx as usize;
-
-    let l0_rank = if l0_idx > 0 {
-        l0_index[l0_idx - 1]
-    } else {
-        0
-    };
-
-    let (l1l2_index, _) = unpack::split_l1l2(index_after_l0, bits);
-    let inner_l1l2_index = unpack::slice_l1l2_index(l1l2_index, l0_idx);
     let l0_offset = idx % size::BITS_PER_L0_BLOCK;
+    let l0_rank = read_l0_rank::<OneBits>(l0_index, bits, l0_idx);
 
-    let l1_idx = (l0_offset / size::BITS_PER_L1_BLOCK) as usize;
-    let l1_offset = l0_offset % size::BITS_PER_L1_BLOCK;
-    debug_assert!(l1_idx < inner_l1l2_index.len());
+    let (l1l2_index, _) = structure::split_l1l2(index_after_l0, bits);
+    let inner_l1l2_index = structure::slice_l1l2_index(l1l2_index, l0_idx);
 
-    let l1l2_entry = inner_l1l2_index[l1_idx];
-    let l1_rank = l1l2_entry.base_rank();
-
-    let l2_idx = (l1_offset / size::BITS_PER_L2_BLOCK) as usize;
-    let l2_offset = l1_offset % size::BITS_PER_L2_BLOCK;
-    let l2_rank = if l2_idx > 0 {
-        l1l2_entry.sub_rank(l2_idx - 1)
-    } else {
-        0
-    };
+    let block_idx = l0_offset / size::BITS_PER_L2_BLOCK;
+    debug_assert!(block_idx < (inner_l1l2_index.len() as u64) * size::L2_BLOCKS_PER_L1_BLOCK as u64);
+    let block_idx = block_idx as usize;
+    let block_offset = l0_offset % size::BITS_PER_L2_BLOCK;
+    let block_rank = read_l1l2_rank::<OneBits>(inner_l1l2_index, block_idx);
 
     let scan_skip_bytes =
         l0_idx * size::BYTES_PER_L0_BLOCK +
-        l1_idx * size::BYTES_PER_L1_BLOCK +
-        l2_idx * size::BYTES_PER_L2_BLOCK;
+        block_idx * size::BYTES_PER_L2_BLOCK;
     let scan_bits = bits.skip_bytes(scan_skip_bytes);
-    let scanned_rank = scan_bits.rank::<OneBits>(l2_offset).expect("Already checked size");
-    Some(l0_rank + l1_rank + l2_rank + scanned_rank)
+    let scanned_rank = scan_bits.rank::<OneBits>(block_offset).expect("Already checked size");
+    Some(l0_rank + block_rank + scanned_rank)
 }
 
 pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
@@ -408,109 +431,106 @@ fn index_within<T: Sized>(slice: &[T], item: &T) -> Option<usize> {
     if idx >= slice.len() { None } else { Some(idx) }
 }
 
+/// Assumes that for some i s.t. from <= i < until: check(j) <=> j >= i
+/// This returns such i.
+fn binary_search<F>(from: usize, until: usize, check: F) -> usize
+where F: Fn(usize) -> bool
+{
+    let mut false_up_to = from;
+    let mut true_from = until;
+
+    while false_up_to < true_from {
+        let mid_ish = (false_up_to + true_from) >> 1;
+        if check(mid_ish) {
+            true_from = mid_ish;
+        } else {
+            false_up_to = mid_ish + 1;
+        }
+    }
+
+    return true_from;
+}
+
 pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
-    if target_rank >= count::<W>(index, bits) {
+    if bits.used_bits() == 0 {
+        return None;
+    }
+    let (l0_index, index_after_l0) = structure::split_l0(index, bits);
+    debug_assert!(l0_index.len() > 0);
+    let total_count_ones = l0_index[l0_index.len() - 1];
+    let total_count = W::convert_count(total_count_ones, bits.used_bits());
+    if target_rank >= total_count {
         return None;
     }
 
-    let l0_size = size::l0(bits.used_bits()) as usize;
-    let (l0_index, inner_indexes) = index.split_at(l0_size);
-
-
-    // slice library does not specify which this returns if
-    // there are multiple equal counts, so it's just a hint
-    let l0_idx_hint = {
-        if l0_index.len() > 16 {
-            let search_for = target_rank + 1;
-            let res = l0_index.binary_search_by_key(&search_for, |count_ref| {
-                let idx = index_within(l0_index, count_ref).unwrap();
-                W::convert_count(*count_ref, (idx as u64 + 1) * size::BITS_PER_L0_BLOCK)
-            });
-            match res {
-                Ok(i) => i,
-                Err(i) => i,
-            }
-        } else {
-            l0_index.len() - 1
-        }
-    };
-
-    let mut l0_idx = l0_idx_hint;
+    // Find the right l0 block by binary search
+    let l0_idx =
+        binary_search(0, l0_index.len(), |idx| {
+            read_l0_cumulative_count::<W>(l0_index, bits, idx) > target_rank
+        });
     debug_assert!(l0_idx < l0_index.len());
-    debug_assert!(
-        W::convert_count(
-            l0_index[l0_idx],
-            (l0_idx as u64 + 1) * size::BITS_PER_L0_BLOCK,
-        ) > target_rank
-    );
-    while l0_idx > 0 &&
-        W::convert_count(
-            l0_index[l0_idx - 1],
-            l0_idx as u64 * size::BITS_PER_L0_BLOCK,
-        ) > target_rank
-    {
-        l0_idx -= 1;
-    }
-    let l0_idx = l0_idx;
-    let l0_block_rank_ones = if l0_idx > 0 { l0_index[l0_idx - 1] } else { 0 };
-    let l0_block_count_ones = l0_index[l0_idx] - l0_block_rank_ones;
-    let bits_before_l0_block = l0_idx as u64 * size::BITS_PER_L0_BLOCK;
-    let l0_block_bits = min(
-        bits.used_bits() - bits_before_l0_block,
-        size::BITS_PER_L0_BLOCK,
-    );
-    let l0_block_rank = W::convert_count(l0_block_rank_ones, bits_before_l0_block);
+    let next_l0_block_rank = read_l0_cumulative_count::<W>(l0_index, bits, l0_idx);
+    debug_assert!(next_l0_block_rank > target_rank);
+    let l0_block_rank = read_l0_rank::<W>(l0_index, bits, l0_idx);
     debug_assert!(l0_block_rank <= target_rank);
-    let l0_block_target_rank = target_rank - l0_block_rank;
+    let target_rank_in_l0_block = target_rank - l0_block_rank;
 
-    let l1l2_size = size::l1l2(l0_block_bits);
-    let inner_index_start = l0_idx as usize * size::INNER_INDEX_SIZE;
-    let inner_index_l1l2 = &inner_indexes[inner_index_start..inner_index_start + l1l2_size];
-    let inner_index_samples = {
-        let ones_samples_size = size::sample_words_for_matching_bits(l0_block_count_ones);
-        let ones_start = inner_index_start + l1l2_size;
-        let zeros_start = ones_start + ones_samples_size;
-        if W::is_ones() {
-            &inner_indexes[ones_start..zeros_start]
+    // Unpack the other parts of the index
+    let (l1l2_index, index_after_l1l2) = structure::split_l1l2(index_after_l0, bits);
+    let inner_l1l2_index = structure::slice_l1l2_index(l1l2_index, l0_idx);
+    debug_assert!(inner_l1l2_index.len() > 0);
+    let (select_ones_samples, select_zeros_samples) =
+        structure::split_samples(index_after_l1l2, bits, total_count_ones);
+    let select_samples =
+        if W::is_ones() { select_ones_samples } else { select_zeros_samples };
+
+    // Use the samples to find bounds on which block can contain our target bit
+    let sample_idx = target_rank / size::SAMPLE_LENGTH;
+    let block_idx_should_be_at_least = {
+        let sample_rank = sample_idx * size::SAMPLE_LENGTH;
+        if sample_rank < l0_block_rank {
+            // Sample is from the previous l0 block
+            0
         } else {
-            let zeros_samples_size =
-                size::sample_words_for_matching_bits(l0_block_bits - l0_block_count_ones);
-            &inner_indexes[zeros_start..zeros_start + zeros_samples_size]
+            (select_samples[sample_idx as usize].idx_in_l0_block() / size::BITS_PER_L2_BLOCK) as usize
         }
     };
-    let inner_index_samples = cast_to_u32(inner_index_samples);
-
-    let sample_idx = (l0_block_target_rank / size::SAMPLE_LENGTH) as usize;
-    let superblock_idx = inner_index_samples[sample_idx] as usize;
-    let l1l2_entry = L1L2Entry::from(inner_index_l1l2[superblock_idx]);
-
-    let bits_before_superblock = superblock_idx as u64 * size::BITS_PER_SUPERBLOCK;
-    let superblock_rank = W::convert_count(l1l2_entry.base_rank(), bits_before_superblock);
-    let superblock_target_rank = l0_block_target_rank - superblock_rank;
-
-    let mut bits_before_lower_block = 0;
-    let mut lower_block_rank = 0;
-
-    for i in (0..3).rev() {
-        let bits_before = (i + 1) as u64 * size::BITS_PER_BLOCK;
-        let sub_rank = W::convert_count(l1l2_entry.sub_rank(i), bits_before);
-        if sub_rank <= superblock_target_rank {
-            bits_before_lower_block = bits_before;
-            lower_block_rank = sub_rank;
-            break;
+    let block_idx_should_be_less_than = {
+        let next_sample_idx = sample_idx + 1;
+        let next_sample_rank = next_sample_idx * size::SAMPLE_LENGTH;
+        if next_sample_rank >= next_l0_block_rank {
+            // Sample is in the next l0 block
+            inner_l1l2_index.len() * 4
+        } else if next_sample_idx >= select_samples.len() as u64 {
+            // Sample does not exist
+            inner_l1l2_index.len() * 4
+        } else {
+            (select_samples[next_sample_idx as usize].idx_in_l0_block() / size::BITS_PER_L2_BLOCK) as usize
         }
-    }
+    };
 
-    let final_search_target_rank = superblock_target_rank - lower_block_rank;
-    let bits_before_final_search = bits_before_l0_block + bits_before_superblock +
-        bits_before_lower_block;
-    debug_assert_eq!(bits_before_l0_block % 8, 0);
-    let bytes_before_final_search = (bits_before_final_search / 8) as usize;
-    let bits_for_final_search = bits.skip_bytes(bytes_before_final_search);
+    let block_idx = {
+        let following_block_idx = 
+            binary_search(block_idx_should_be_at_least,
+                          block_idx_should_be_less_than,
+                          |idx| {
+                              read_l1l2_rank::<W>(inner_l1l2_index, idx) > target_rank_in_l0_block
+                          });
+        debug_assert!(following_block_idx > 0);
+        following_block_idx - 1
+    };
+    let block_rank = read_l1l2_rank::<W>(inner_l1l2_index, block_idx);
+    let target_rank_in_block = target_rank_in_l0_block - block_rank;
 
-    bits_for_final_search
-        .select::<W>(final_search_target_rank)
-        .map(|res| res + bits_before_final_search)
+    let scan_skip_bytes =
+        l0_idx * size::BYTES_PER_L0_BLOCK +
+        block_idx * size::BYTES_PER_L2_BLOCK;
+    let scan_bits = bits.skip_bytes(scan_skip_bytes);
+    let scanned_idx =
+        scan_bits.select::<W>(target_rank_in_block)
+        .expect("Already checked against total count");
+
+    Some(scan_skip_bytes as u64 * 8 + scanned_idx)
 }
 
 #[cfg(test)]
