@@ -334,6 +334,7 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
 }
 
 fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bits: Bits<&[u8]>, samples: &mut [SampleEntry]) {
+
     // TODO: Unimplemented
     unimplemented!();
 }
@@ -432,6 +433,27 @@ where F: Fn(usize) -> bool
     }
 
     return true_from;
+}
+
+/// Works like binary_search, but optimises for the sought index
+/// being near the starting point
+fn binary_search_lower<F>(from: usize, until: usize, check: F) -> usize
+where F: Fn(usize) -> bool
+{
+    if until <= from + 1 { return binary_search(from, until, check) };
+    let span = until - from;
+    let half_span = span / 2;
+    let mut offset = 1;
+    loop {
+        let test = from + offset;
+        if check(test) {
+            return binary_search(from, test, check);
+        } else if offset >= half_span {
+            return binary_search(from + offset, until, check);
+        } else {
+            offset *= 2;
+        }
+    }
 }
 
 pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
