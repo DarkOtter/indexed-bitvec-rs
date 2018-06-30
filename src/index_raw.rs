@@ -356,17 +356,15 @@ fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bit
         .enumerate()
         .scan(Some(WithOffset::at_origin(samples)), |samples, (l0_idx, (rank_start, rank_end))| {
             let n_samples_seen_end = size::samples_for_bits(rank_end);
-            match WithOffset::take_upto_offset(samples, n_samples_seen_end) {
-                None => None,
-                Some(here_samples) => {
-                    if here_samples.len() == 0 {
-                        None
-                    } else {
-                        debug_assert!(here_samples.len() == n_samples_seen_end - size::samples_for_bits(rank_start));
-                        let inner_l1l2_index = structure::slice_l1l2_index(l1l2_index, l0_idx);
-                        Some((rank_start, inner_l1l2_index, here_samples))
-                    }
-                },
+            let here_samples =
+                WithOffset::take_upto_offset(samples, n_samples_seen_end)
+                .expect("Should never run out of samples");
+            if here_samples.len() == 0 {
+                None
+            } else {
+                debug_assert!(here_samples.len() == n_samples_seen_end - size::samples_for_bits(rank_start));
+                let inner_l1l2_index = structure::slice_l1l2_index(l1l2_index, l0_idx);
+                Some((rank_start, inner_l1l2_index, here_samples))
             }
         });
 
@@ -604,8 +602,6 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
 mod tests {
     use super::*;
     use super::super::ceil_div_u64;
-    use quickcheck;
-    use quickcheck::Arbitrary;
     use ones_or_zeros::{OneBits, ZeroBits};
 
     #[test]
@@ -613,7 +609,7 @@ mod tests {
         use rand::{Rng, SeedableRng, XorShiftRng};
         let n_bits: u64 = (1 << 19) - 1;
         let n_bytes: usize = ceil_div_u64(n_bits, 8) as usize;
-        let seed = [42, 349107693, 17273721493, 135691827498];
+        let seed = [42, 349107693, 1723721493, 1356827498];
         let mut rng = XorShiftRng::from_seed(seed);
         let data = {
             let mut data = vec![0u8; n_bytes];
@@ -624,7 +620,7 @@ mod tests {
         let data = data.clone_ref();
         let index = {
             let mut index = vec![0u64; index_size_for(data)];
-            build_index_for(data, &mut index);
+            build_index_for(data, &mut index).unwrap();
             index
         };
 
