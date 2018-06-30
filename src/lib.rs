@@ -59,6 +59,7 @@ pub mod result;
 pub mod word;
 pub mod bytes;
 pub mod bits_type;
+mod with_offset;
 pub mod index_raw;
 
 #[cfg(test)]
