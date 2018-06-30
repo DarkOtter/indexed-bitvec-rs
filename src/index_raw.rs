@@ -276,7 +276,7 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
     bits.chunks_bytes(size::BYTES_PER_L0_BLOCK)
         .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
         .zip(l0_index.iter_mut())
-    // This loop could be parallelised
+    // TODO: This loop could be parallelised
         .for_each(|((bits_chunk, l1l2_chunk), l0_entry)| {
             *l0_entry = build_inner_l1l2(l1l2_chunk, bits_chunk)
         });
@@ -293,6 +293,7 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
     // Build the select index
     let (samples_ones, samples_zeros) =
         structure::split_samples_mut(index_after_l1l2, bits, total_count_ones);
+    // TODO: These calls could be parallelised (divide-and-conquer)
     build_samples::<OneBits>(l0_index, l1l2_index, bits, samples_ones);
     build_samples::<ZeroBits>(l0_index, l1l2_index, bits, samples_zeros);
 
@@ -307,7 +308,7 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
 
     data_chunk.chunks_bytes(size::BYTES_PER_L1_BLOCK)
         .zip(l1l2_index.iter_mut())
-    // This loop could be parallelised
+    // TODO: This loop could be parallelised
         .for_each(|(l1_chunk, write_to)| {
             let mut counts = [0u16; 4];
             l1_chunk
@@ -414,7 +415,7 @@ fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bit
         });
 
     chunks_with_samples
-        // This loop could be parallelised
+    // TODO: This loop could be parallelised
         .for_each(|(start_rank, inner_l1l2_index, samples)| {
             build_samples_inner::<W>(start_rank, inner_l1l2_index, 0, inner_l1l2_index.len() * 4, samples)
         })
@@ -452,7 +453,7 @@ fn build_samples_inner<W: OnesOrZeros>(
 
     let (before_mid, after_mid) = samples.split_at_mut_by_offset(samples_before_mid_block);
 
-    // These could be parallelised (divide-and-conquer)
+    // TODO: These calls could be parallelised (divide-and-conquer)
     build_samples_inner::<W>(base_rank, inner_l1l2_index, low_block, mid_block, before_mid);
     build_samples_inner::<W>(base_rank, inner_l1l2_index, mid_block, high_block, after_mid);
 }
@@ -538,11 +539,13 @@ pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Optio
 fn binary_search<F>(from: usize, until: usize, check: F) -> usize
 where F: Fn(usize) -> bool
 {
+    const LINEAR_FOR_N: usize = 16;
+
     let mut false_up_to = from;
     let mut true_from = until;
 
-    while false_up_to < true_from {
-        let mid_ish = (false_up_to + true_from) >> 1;
+    while false_up_to + LINEAR_FOR_N < true_from {
+        let mid_ish = (false_up_to + true_from) / 2;
         if check(mid_ish) {
             true_from = mid_ish;
         } else {
@@ -550,7 +553,13 @@ where F: Fn(usize) -> bool
         }
     }
 
-    return true_from;
+    while false_up_to < true_from && !check(false_up_to) {
+        false_up_to += 1;
+    }
+    debug_assert!(false_up_to <= true_from);
+    debug_assert!(false_up_to == true_from || check(false_up_to));
+
+    return false_up_to;
 }
 
 pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
