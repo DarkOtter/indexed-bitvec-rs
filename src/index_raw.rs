@@ -405,7 +405,9 @@ fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bit
                     if here_samples.len() == 0 {
                         None
                     } else {
-                        Some((rank_start, structure::slice_l1l2_index(l1l2_index, l0_idx), here_samples))
+                        debug_assert!(here_samples.len() == n_samples_seen_end - size::samples_for_bits(rank_start));
+                        let inner_l1l2_index = structure::slice_l1l2_index(l1l2_index, l0_idx);
+                        Some((rank_start, inner_l1l2_index, here_samples))
                     }
                 },
             }
@@ -413,46 +415,40 @@ fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bit
 
     chunks_with_samples
         // This loop could be parallelised
-        .for_each(|(start_rank, inner_l1l2_index, samples)|
-            build_samples_inner::<W>(start_rank, inner_l1l2_index, 0, inner_l1l2_index.len(), samples))
+        .for_each(|(start_rank, inner_l1l2_index, samples)| {
+            build_samples_inner::<W>(start_rank, inner_l1l2_index, 0, inner_l1l2_index.len() * 4, samples)
+        })
 }
 
 fn build_samples_inner<W: OnesOrZeros>(
     base_rank: u64,
     inner_l1l2_index: &[L1L2Entry],
-    mut low_block: usize,
-    mut high_block: usize,
+    low_block: usize,
+    high_block: usize,
     samples: WithOffset<&mut [SampleEntry]>) {
 
     if samples.len() == 0 {
         return;
     } else if samples.len() == 1 {
-        // TODO: Unimplemented
-        unimplemented!();
+        debug_assert!(high_block > low_block);
+        let target_rank = samples.offset_from_origin() as u64 * size::SAMPLE_LENGTH;
+        let target_rank_in_l0 = target_rank - base_rank;
+        let following_block_idx =
+        binary_search(low_block, high_block, |block_idx| {
+            read_l1l2_rank::<W>(inner_l1l2_index, block_idx) > target_rank_in_l0
+        });
+        debug_assert!(following_block_idx > low_block);
+        samples.data[0] = SampleEntry::pack(following_block_idx - 1);
+        return;
     }
 
     debug_assert!(samples.len() > 1);
     debug_assert!(high_block > low_block + 1);
 
-    let mut mid_block = (low_block + high_block + 1) / 2;
+    let mid_block = (low_block + high_block + 1) / 2;
     debug_assert!(mid_block < high_block);
-    let mut samples_before_mid_block =
+    let samples_before_mid_block =
         size::samples_for_bits(read_l1l2_rank::<W>(inner_l1l2_index, mid_block) + base_rank);
-
-    // Narrow on the left if we wouldn't have any samples on the left after the split
-    while samples_before_mid_block <= samples.offset_from_origin() {
-        low_block = mid_block;
-        mid_block = (low_block + high_block) / 2;
-        samples_before_mid_block =
-            size::samples_for_bits(read_l1l2_rank::<W>(inner_l1l2_index, mid_block) + base_rank);
-    }
-    // Similarly on the right
-    while samples_before_mid_block >= samples.offset_from_origin() + samples.len() {
-        high_block = mid_block;
-        mid_block = (low_block + high_block) / 2;
-        samples_before_mid_block =
-            size::samples_for_bits(read_l1l2_rank::<W>(inner_l1l2_index, mid_block) + base_rank);
-    }
 
     let (before_mid, after_mid) = samples.split_at_mut_by_offset(samples_before_mid_block);
 
