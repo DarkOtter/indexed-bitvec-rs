@@ -22,6 +22,7 @@
 //! to slices. They should all be memory-safe though.
 
 use super::{ceil_div, ceil_div_u64};
+use super::with_offset::WithOffset;
 use std::cmp::min;
 use bits_type::Bits;
 use ones_or_zeros::{OneBits, ZeroBits, OnesOrZeros};
@@ -336,51 +337,6 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
     running_total
 }
 
-struct WithOffset<T> {
-    offset: usize,
-    data: T,
-}
-
-impl<T> WithOffset<T> {
-    fn at_origin(data: T) -> Self {
-        WithOffset { offset: 0, data }
-    }
-
-    fn offset_from_origin(&self) -> usize {
-        self.offset
-    }
-}
-
-impl<'a, T> WithOffset<&'a mut [T]> {
-    fn split_at_mut_by_offset(self, idx: usize) -> (Self, Self) {
-        let WithOffset { offset, data } = self;
-        if idx < offset { panic!("Index out of bounds - before current offset") };
-        let (data_l, data_r) = data.split_at_mut(idx - offset);
-        let data_l_len = data_l.len();
-        (WithOffset { offset, data: data_l },
-         WithOffset { offset: offset + data_l_len, data: data_r })
-    }
-}
-
-fn take_first_part_upto_offset<'a, T>(opt_ref: &mut Option<WithOffset<&'a mut [T]>>, idx: usize) -> Option<WithOffset<&'a mut [T]>> {
-    let whole_thing = match opt_ref.take() {
-        None => return None,
-        Some(x) => x,
-    };
-    let (first_part, second_part) = whole_thing.split_at_mut_by_offset(idx);
-    *opt_ref = Some(second_part);
-    Some(first_part)
-}
-
-use std::ops::Deref;
-impl<T> Deref for WithOffset<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
 fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bits: Bits<&[u8]>, samples: &mut [SampleEntry]) {
     let mut running_base_rank = 0u64;
     let mut running_total_bits = 0u64;
@@ -400,7 +356,7 @@ fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bit
         .enumerate()
         .scan(Some(WithOffset::at_origin(samples)), |samples, (l0_idx, (rank_start, rank_end))| {
             let n_samples_seen_end = size::samples_for_bits(rank_end);
-            match take_first_part_upto_offset(samples, n_samples_seen_end) {
+            match WithOffset::take_upto_offset(samples, n_samples_seen_end) {
                 None => None,
                 Some(here_samples) => {
                     if here_samples.len() == 0 {
@@ -426,7 +382,7 @@ fn build_samples_inner<W: OnesOrZeros>(
     inner_l1l2_index: &[L1L2Entry],
     low_block: usize,
     high_block: usize,
-    samples: WithOffset<&mut [SampleEntry]>) {
+    mut samples: WithOffset<&mut [SampleEntry]>) {
 
     if samples.len() == 0 {
         return;
@@ -439,7 +395,7 @@ fn build_samples_inner<W: OnesOrZeros>(
             read_l1l2_rank::<W>(inner_l1l2_index, block_idx) > target_rank_in_l0
         });
         debug_assert!(following_block_idx > low_block);
-        samples.data[0] = SampleEntry::pack(following_block_idx - 1);
+        samples[0] = SampleEntry::pack(following_block_idx - 1);
         return;
     }
 
