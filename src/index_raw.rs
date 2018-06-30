@@ -49,12 +49,12 @@ mod size {
 
     /// e.g. if we have N one bits, how many samples do we need?
     pub fn samples_for_bits(matching_bitcount: u64) -> usize {
-        (matching_bitcount.saturating_sub(1) / SAMPLE_LENGTH) as usize
+        ceil_div_u64(matching_bitcount, SAMPLE_LENGTH) as usize
     }
     /// If we have N one and zero bits,
     /// how many words for ones and zeros samples together?
     pub fn sample_words(total_bits: u64) -> usize {
-        ceil_div(samples_for_bits(total_bits), 2)
+        ceil_div(samples_for_bits(total_bits) + 1, 2)
     }
 
     pub fn total_index_words(total_bits: u64) -> usize {
@@ -230,6 +230,8 @@ mod structure {
         let all_samples = cast_to_samples_mut(index_after_l1l2);
         let n_samples_ones = size::samples_for_bits(count_ones);
         let n_samples_zeros = size::samples_for_bits(data.used_bits() - count_ones);
+        debug_assert!(all_samples.len() >= n_samples_ones + n_samples_zeros);
+        debug_assert!(all_samples.len() <= n_samples_ones + n_samples_zeros + 1);
         let (ones_samples, other_samples) = all_samples.split_at_mut(n_samples_ones);
         let zeros_samples = &mut other_samples[..n_samples_zeros];
         (ones_samples, zeros_samples)
@@ -333,10 +335,130 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
     running_total
 }
 
-fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bits: Bits<&[u8]>, samples: &mut [SampleEntry]) {
+struct WithOffset<T> {
+    offset: usize,
+    data: T,
+}
 
-    // TODO: Unimplemented
-    unimplemented!();
+impl<T> WithOffset<T> {
+    fn at_origin(data: T) -> Self {
+        WithOffset { offset: 0, data }
+    }
+
+    fn offset_from_origin(&self) -> usize {
+        self.offset
+    }
+}
+
+impl<'a, T> WithOffset<&'a mut [T]> {
+    fn split_at_mut_by_offset(self, idx: usize) -> (Self, Self) {
+        let WithOffset { offset, data } = self;
+        if idx < offset { panic!("Index out of bounds - before current offset") };
+        let (data_l, data_r) = data.split_at_mut(idx - offset);
+        let data_l_len = data_l.len();
+        (WithOffset { offset, data: data_l },
+         WithOffset { offset: offset + data_l_len, data: data_r })
+    }
+}
+
+fn take_first_part_upto_offset<'a, T>(opt_ref: &mut Option<WithOffset<&'a mut [T]>>, idx: usize) -> Option<WithOffset<&'a mut [T]>> {
+    let whole_thing = match opt_ref.take() {
+        None => return None,
+        Some(x) => x,
+    };
+    let (first_part, second_part) = whole_thing.split_at_mut_by_offset(idx);
+    *opt_ref = Some(second_part);
+    Some(first_part)
+}
+
+use std::ops::Deref;
+impl<T> Deref for WithOffset<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+fn build_samples<W: OnesOrZeros>(l0_index: &[u64], l1l2_index: &[L1L2Entry], bits: Bits<&[u8]>, samples: &mut [SampleEntry]) {
+    let mut running_base_rank = 0u64;
+    let mut running_total_bits = 0u64;
+
+    let l0_chunks_start_end_rank = {
+        l0_index.iter().map(|cumulative_count| {
+            let base_rank = running_base_rank.clone();
+            running_total_bits = min(bits.used_bits(), running_total_bits + size::BITS_PER_L0_BLOCK);
+            let cumulative_count = W::convert_count(cumulative_count.clone(), running_total_bits);
+            running_base_rank = cumulative_count;
+            (base_rank, cumulative_count)
+        })
+    };
+
+    let chunks_with_samples =
+        l0_chunks_start_end_rank
+        .enumerate()
+        .scan(Some(WithOffset::at_origin(samples)), |samples, (l0_idx, (rank_start, rank_end))| {
+            let n_samples_seen_end = size::samples_for_bits(rank_end);
+            match take_first_part_upto_offset(samples, n_samples_seen_end) {
+                None => None,
+                Some(here_samples) => {
+                    if here_samples.len() == 0 {
+                        None
+                    } else {
+                        Some((rank_start, structure::slice_l1l2_index(l1l2_index, l0_idx), here_samples))
+                    }
+                },
+            }
+        });
+
+    chunks_with_samples
+        // This loop could be parallelised
+        .for_each(|(start_rank, inner_l1l2_index, samples)|
+            build_samples_inner::<W>(start_rank, inner_l1l2_index, 0, inner_l1l2_index.len(), samples))
+}
+
+fn build_samples_inner<W: OnesOrZeros>(
+    base_rank: u64,
+    inner_l1l2_index: &[L1L2Entry],
+    mut low_block: usize,
+    mut high_block: usize,
+    samples: WithOffset<&mut [SampleEntry]>) {
+
+    if samples.len() == 0 {
+        return;
+    } else if samples.len() == 1 {
+        // TODO: Unimplemented
+        unimplemented!();
+    }
+
+    debug_assert!(samples.len() > 1);
+    debug_assert!(high_block > low_block + 1);
+
+    let mut mid_block = (low_block + high_block + 1) / 2;
+    debug_assert!(mid_block < high_block);
+    let mut samples_before_mid_block =
+        size::samples_for_bits(read_l1l2_rank::<W>(inner_l1l2_index, mid_block) + base_rank);
+
+    // Narrow on the left if we wouldn't have any samples on the left after the split
+    while samples_before_mid_block <= samples.offset_from_origin() {
+        low_block = mid_block;
+        mid_block = (low_block + high_block) / 2;
+        samples_before_mid_block =
+            size::samples_for_bits(read_l1l2_rank::<W>(inner_l1l2_index, mid_block) + base_rank);
+    }
+    // Similarly on the right
+    while samples_before_mid_block >= samples.offset_from_origin() + samples.len() {
+        high_block = mid_block;
+        mid_block = (low_block + high_block) / 2;
+        samples_before_mid_block =
+            size::samples_for_bits(read_l1l2_rank::<W>(inner_l1l2_index, mid_block) + base_rank);
+    }
+
+    let (before_mid, after_mid) = samples.split_at_mut_by_offset(samples_before_mid_block);
+
+    // These could be parallelised (divide-and-conquer)
+    build_samples_inner::<W>(base_rank, inner_l1l2_index, low_block, mid_block, before_mid);
+    build_samples_inner::<W>(base_rank, inner_l1l2_index, mid_block, high_block, after_mid);
 }
 
 pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
@@ -433,27 +555,6 @@ where F: Fn(usize) -> bool
     }
 
     return true_from;
-}
-
-/// Works like binary_search, but optimises for the sought index
-/// being near the starting point
-fn binary_search_lower<F>(from: usize, until: usize, check: F) -> usize
-where F: Fn(usize) -> bool
-{
-    if until <= from + 1 { return binary_search(from, until, check) };
-    let span = until - from;
-    let half_span = span / 2;
-    let mut offset = 1;
-    loop {
-        let test = from + offset;
-        if check(test) {
-            return binary_search(from, test, check);
-        } else if offset >= half_span {
-            return binary_search(from + offset, until, check);
-        } else {
-            offset *= 2;
-        }
-    }
 }
 
 pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
