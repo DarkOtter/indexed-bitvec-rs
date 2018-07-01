@@ -1,11 +1,11 @@
 [package]
-name = "indexed_bitvec_core"
+name = "indexed_bitvec"
 version = "0.1.0"
 authors = ["DarkOtter <>"]
 license = "Apache-2.0"
 
-[dependencies]
-byteorder = "1"
+[dependencies.indexed_bitvec_core]
+path = "../indexed-bitvec-core"
 
 [dev-dependencies]
 rand = "0.4"

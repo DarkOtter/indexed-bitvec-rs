@@ -2,6 +2,7 @@
 
 members = [
 "indexed-bitvec-core",
+"indexed-bitvec",
 ]
 
 [profile.release]
