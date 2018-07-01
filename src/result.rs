@@ -13,9 +13,9 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-use std::result;
 use std::error;
 use std::fmt;
+use std::result;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Error {

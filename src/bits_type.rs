@@ -14,10 +14,10 @@
    limitations under the License.
 */
 use super::ceil_div_u64;
-use std::ops::Deref;
-use std::cmp::min;
 use bytes;
 use ones_or_zeros::OnesOrZeros;
+use std::cmp::min;
+use std::ops::Deref;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
@@ -77,9 +77,10 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         if idx >= self.used_bits() {
             None
         } else {
-            Some(bytes::rank::<W>(self.all_bytes(), idx).expect(
-                "Internally called rank out-of-range",
-            ))
+            Some(
+                bytes::rank::<W>(self.all_bytes(), idx)
+                    .expect("Internally called rank out-of-range"),
+            )
         }
     }
 
@@ -100,13 +101,14 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     pub(crate) fn chunks_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
         let available_bits = self.used_bits();
         let bits_per_chunk = (bytes_per_chunk as u64) * 8;
-        self.bytes().chunks(bytes_per_chunk).enumerate().map(
-            move |(i, chunk)| {
+        self.bytes()
+            .chunks(bytes_per_chunk)
+            .enumerate()
+            .map(move |(i, chunk)| {
                 let used_bits = i as u64 * bits_per_chunk;
                 let bits = min(available_bits - used_bits, bits_per_chunk);
                 Bits::from(chunk, bits).expect("Size invariant violated")
-            },
-        )
+            })
     }
 
     pub(crate) fn skip_bytes(&self, idx_bytes: usize) -> Bits<&[u8]> {
@@ -128,9 +130,9 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ones_or_zeros::{OneBits, ZeroBits};
     use quickcheck;
     use quickcheck::Arbitrary;
-    use ones_or_zeros::{OneBits, ZeroBits};
 
     impl Arbitrary for Bits<Box<[u8]>> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
@@ -213,7 +215,6 @@ mod tests {
         assert_eq!(None, make(13).rank::<ZeroBits>(13));
         assert_eq!(bits_a.rank::<OneBits>(12), make(13).rank::<OneBits>(12));
         assert_eq!(bits_a.rank::<ZeroBits>(12), make(13).rank::<ZeroBits>(12));
-
     }
 
     #[test]

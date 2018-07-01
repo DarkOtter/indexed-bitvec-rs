@@ -13,8 +13,8 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-use word::{select_ones_u16, Word};
 use ones_or_zeros::OnesOrZeros;
+use word::{select_ones_u16, Word};
 
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
     let byte_idx = (idx_bits / 8) as usize;
@@ -35,7 +35,7 @@ pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
 }
 
 fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
-    use std::mem::{size_of, align_of};
+    use std::mem::{align_of, size_of};
 
     if data.len() < size_of::<u64>() || data.len() < align_of::<u64>() {
         return Err(data);
@@ -45,7 +45,11 @@ fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     let alignment_offset = {
         let need_alignment = align_of::<u64>();
         let rem = (data.as_ptr() as usize) % need_alignment;
-        if rem > 0 { need_alignment - rem } else { 0 }
+        if rem > 0 {
+            need_alignment - rem
+        } else {
+            0
+        }
     };
 
     let (pre_partial, data) = data.split_at(alignment_offset);
@@ -79,8 +83,9 @@ pub fn count_ones(data: &[u8]) -> u64 {
     match bytes_as_u64s(data) {
         Err(data) => count_ones_bytes_slow(data),
         Ok((pre_partial, data, post_partial)) => {
-            count_ones_bytes_slow(pre_partial) + count_ones_words(data) +
-                count_ones_bytes_slow(post_partial)
+            count_ones_bytes_slow(pre_partial)
+                + count_ones_words(data)
+                + count_ones_bytes_slow(post_partial)
         }
     }
 }
@@ -171,8 +176,8 @@ pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck;
     use ones_or_zeros::{OneBits, ZeroBits};
+    use quickcheck;
 
     #[test]
     fn test_get() {

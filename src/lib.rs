@@ -55,12 +55,12 @@ pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
 pub mod ones_or_zeros;
 pub use ones_or_zeros::{OneBits, ZeroBits};
 
-pub mod result;
-pub mod word;
-pub mod bytes;
 pub mod bits_type;
-mod with_offset;
+pub mod bytes;
 pub mod index_raw;
+pub mod result;
+mod with_offset;
+pub mod word;
 
 #[cfg(test)]
 mod tests {

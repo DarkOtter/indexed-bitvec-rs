@@ -16,11 +16,21 @@ impl<T> WithOffset<T> {
 impl<'a, T> WithOffset<&'a mut [T]> {
     pub fn split_at_mut_by_offset(self, idx: usize) -> (Self, Self) {
         let WithOffset { offset, data } = self;
-        if idx < offset { panic!("Index out of bounds - before current offset") };
+        if idx < offset {
+            panic!("Index out of bounds - before current offset")
+        };
         let (data_l, data_r) = data.split_at_mut(idx - offset);
         let data_l_len = data_l.len();
-        (WithOffset { offset, data: data_l },
-         WithOffset { offset: offset + data_l_len, data: data_r })
+        (
+            WithOffset {
+                offset,
+                data: data_l,
+            },
+            WithOffset {
+                offset: offset + data_l_len,
+                data: data_r,
+            },
+        )
     }
 
     pub fn take_upto_offset(opt_ref: &mut Option<Self>, idx: usize) -> Option<Self> {

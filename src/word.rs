@@ -40,7 +40,11 @@ impl Word {
 
     #[inline]
     fn index_check(self, idx: usize) -> Option<()> {
-        if idx >= self.len() { None } else { Some(()) }
+        if idx >= self.len() {
+            None
+        } else {
+            Some(())
+        }
     }
 
     #[inline]
