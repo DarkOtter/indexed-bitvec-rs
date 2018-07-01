@@ -69,7 +69,6 @@ pub use bits::Bits;
 mod with_offset;
 
 pub mod index_raw;
-pub mod result;
 
 #[cfg(test)]
 mod tests {

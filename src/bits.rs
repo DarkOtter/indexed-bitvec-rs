@@ -159,7 +159,8 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
-    pub(crate) fn chunks_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
+    /// Split the bits into a sequence of chunks of up to *n* bytes.
+    pub fn chunks_by_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
         let available_bits = self.used_bits();
         let bits_per_chunk = (bytes_per_chunk as u64) * 8;
         self.bytes()
@@ -172,14 +173,24 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
             })
     }
 
-    pub(crate) fn skip_bytes(&self, idx_bytes: usize) -> Bits<&[u8]> {
+    /// Drop the first *n* bytes of bits from the front of the sequence.
+    ///
+    /// ```
+    /// use indexed_bitvec::*;
+    /// let bits = Bits::from(vec![0xFF, 0x00], 16).unwrap();
+    /// assert_eq!(bits.get(0), Some(true));
+    /// assert_eq!(bits.get(8), Some(false));
+    /// assert_eq!(bits.drop_bytes(1).get(0), Some(false));
+    /// assert_eq!(bits.drop_bytes(1).get(8), None);
+    /// ```
+    pub fn drop_bytes(&self, n_bytes: usize) -> Bits<&[u8]> {
         let bytes = self.bytes();
-        if idx_bytes >= bytes.len() {
-            panic!("Tried to skip the whole of a bitvector");
+        if n_bytes >= bytes.len() {
+            panic!("Index out of bounds: tried to drop all of the bits");
         }
         Bits::from(
-            &bytes[idx_bytes..],
-            self.used_bits() - (idx_bytes as u64 * 8),
+            &bytes[n_bytes..],
+            self.used_bits() - (n_bytes as u64 * 8),
         ).expect("Checked sufficient bytes are present")
     }
 

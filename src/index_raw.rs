@@ -268,17 +268,18 @@ pub fn index_size_for(bits: Bits<&[u8]>) -> usize {
     size::total_index_words(bits.used_bits())
 }
 
-use result::Error;
+#[derive(Copy, Clone, Debug)]
+pub struct IndexSizeError;
 
-pub fn check_index_size(index: &[u64], bits: Bits<&[u8]>) -> Result<(), Error> {
+pub fn check_index_size(index: &[u64], bits: Bits<&[u8]>) -> Result<(), IndexSizeError> {
     if index.len() != index_size_for(bits) {
-        Err(Error::IndexIncorrectSize)
+        Err(IndexSizeError)
     } else {
         Ok(())
     }
 }
 
-pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error> {
+pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexSizeError> {
     check_index_size(into, bits)?;
 
     if bits.used_bits() == 0 {
@@ -290,7 +291,7 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), Error>
     let (l1l2_index, index_after_l1l2) = structure::split_l1l2_mut(index_after_l0, bits);
 
     // Build the L1L2 index, and get the L0 block bitcounts
-    bits.chunks_bytes(size::BYTES_PER_L0_BLOCK)
+    bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
         .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
         .zip(l0_index.iter_mut())
     // TODO: This loop could be parallelised
@@ -323,13 +324,13 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
     debug_assert!(data_chunk.used_bits() <= size::BITS_PER_L0_BLOCK);
     debug_assert!(l1l2_index.len() == size::l1l2(data_chunk.used_bits()));
 
-    data_chunk.chunks_bytes(size::BYTES_PER_L1_BLOCK)
+    data_chunk.chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
         .zip(l1l2_index.iter_mut())
     // TODO: This loop could be parallelised
         .for_each(|(l1_chunk, write_to)| {
             let mut counts = [0u16; 4];
             l1_chunk
-                .chunks_bytes(size::BYTES_PER_L2_BLOCK)
+                .chunks_by_bytes(size::BYTES_PER_L2_BLOCK)
                 .zip(counts.iter_mut())
                 .for_each(|(chunk, write_to)| {
                     *write_to = chunk.count::<OneBits>() as u16
@@ -526,7 +527,7 @@ pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     let block_rank = read_l1l2_rank::<OneBits>(inner_l1l2_index, block_idx);
 
     let scan_skip_bytes = l0_idx * size::BYTES_PER_L0_BLOCK + block_idx * size::BYTES_PER_L2_BLOCK;
-    let scan_bits = bits.skip_bytes(scan_skip_bytes);
+    let scan_bits = bits.drop_bytes(scan_skip_bytes);
     let scanned_rank = scan_bits
         .rank::<OneBits>(block_offset)
         .expect("Already checked size");
@@ -639,7 +640,7 @@ pub fn select<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, target_rank: u64
     let target_rank_in_block = target_rank_in_l0_block - block_rank;
 
     let scan_skip_bytes = l0_idx * size::BYTES_PER_L0_BLOCK + block_idx * size::BYTES_PER_L2_BLOCK;
-    let scan_bits = bits.skip_bytes(scan_skip_bytes);
+    let scan_bits = bits.drop_bytes(scan_skip_bytes);
     let scanned_idx = scan_bits
         .select::<W>(target_rank_in_block)
         .expect("Already checked against total count");
