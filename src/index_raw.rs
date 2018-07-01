@@ -262,15 +262,23 @@ mod structure {
 }
 use self::structure::{L1L2Entry, SampleEntry};
 
-/// You need this many u64s for the index for these bits.
-/// This calculation is O(1) (maths based on the number of bits).
+/// Calculate the storage size for an index for a given bitvector (*O(1)*).
+///
+/// This just looks at the number of bits in the bitvector and does some
+/// calculations. The number returned is the number of `u64`s needed to
+/// store the index.
 pub fn index_size_for(bits: Bits<&[u8]>) -> usize {
     size::total_index_words(bits.used_bits())
 }
 
+/// Indicates the index storage was the wrong size for the bit vector it was used with.
 #[derive(Copy, Clone, Debug)]
 pub struct IndexSizeError;
 
+/// Check an index is the right size for a given bitvector.
+///
+/// This does not in any way guarantee the index was built for
+/// that bitvector, or that neither has been modified.
 pub fn check_index_size(index: &[u64], bits: Bits<&[u8]>) -> Result<(), IndexSizeError> {
     if index.len() != index_size_for(bits) {
         Err(IndexSizeError)
@@ -279,6 +287,7 @@ pub fn check_index_size(index: &[u64], bits: Bits<&[u8]>) -> Result<(), IndexSiz
     }
 }
 
+/// Build the index data for a given bitvector (*O(n)*).
 pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexSizeError> {
     check_index_size(into, bits)?;
 
@@ -449,7 +458,7 @@ fn build_samples_inner<W: OnesOrZeros>(
     );
 }
 
-pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     if bits.used_bits() == 0 {
         return 0;
     }
@@ -458,6 +467,7 @@ pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     index[l0_size - 1]
 }
 
+/// Count the set/unset bits using the index (fast *O(1)*).
 pub fn count<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     W::convert_count(count_ones(index, bits), bits.used_bits())
 }
@@ -500,7 +510,7 @@ fn read_l1l2_rank<W: OnesOrZeros>(inner_l1l2_index: &[L1L2Entry], block_idx: usi
     )
 }
 
-pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     if idx >= bits.used_bits() {
         return None;
     } else if idx == 0 {
@@ -534,6 +544,10 @@ pub fn rank_ones(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     Some(l0_rank + block_rank + scanned_rank)
 }
 
+
+/// Count the set/unset bits before a position in the bits using the index (*O(1)*).
+///
+/// Returns `None` it the index is out of bounds.
 pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     rank_ones(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
