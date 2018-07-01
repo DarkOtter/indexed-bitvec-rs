@@ -67,7 +67,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` for out-of-bounds.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(7), Some(false));
@@ -86,7 +86,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Count the set/unset bits (*O(n)*).
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count::<OneBits>(), 14);
     /// assert_eq!(bits.count::<ZeroBits>(), 1);
@@ -106,7 +106,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` it the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.used_bits()).all(|idx|
     ///     bits.rank::<OneBits>(idx).unwrap()
@@ -138,7 +138,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// and `get(result) == Some(W::is_ones())`.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.select::<OneBits>(6), Some(6));
     /// assert_eq!(bits.select::<OneBits>(7), Some(8));
@@ -176,7 +176,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Drop the first *n* bytes of bits from the front of the sequence.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFF, 0x00], 16).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(8), Some(false));

@@ -1,5 +1,5 @@
 [package]
-name = "indexed_bitvec"
+name = "indexed_bitvec-core"
 version = "0.1.0"
 authors = ["DarkOtter <>"]
 license = "Apache-2.0"
@@ -10,8 +10,3 @@ byteorder = "1"
 [dev-dependencies]
 rand = "0.4"
 quickcheck = "0.6"
-
-[profile.release]
-lto = true
-codegen-units = 1
-incremental = false
