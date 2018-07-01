@@ -25,7 +25,8 @@ pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
     (byte & mask) != 0
 }
 
-pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
+#[cfg(test)]
+fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     let byte_idx = idx_bits / 8;
     if byte_idx >= data.len() as u64 {
         None

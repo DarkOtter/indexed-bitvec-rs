@@ -13,8 +13,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-//! This module contains the raw functions for the index rank
-//! and select operations, as well as building indexes.
+//! The raw functions for building and using rank/select indexes.
 //!
 //! The functions here do minimal if any checking on the size
 //! or validity of indexes vs. the bitvectors they are used with,

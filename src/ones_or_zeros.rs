@@ -13,7 +13,10 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+
+/// Supply to generic functions to work with/count set bits (ones).
 pub enum OneBits {}
+/// Supply to generic functions to work with/count unset bits (zeros).
 pub enum ZeroBits {}
 
 mod private {
@@ -22,6 +25,8 @@ mod private {
     impl Sealed for super::ZeroBits {}
 }
 
+/// Trait used to provide functionality generic across 1 or 0 bits,
+/// for example rank in terms of set or unset bits.
 pub trait OnesOrZeros: private::Sealed {
     /// Convert a count of ones in a range to a count of ones or zeros.
     /// The result is never larger than the number of bits supplied.

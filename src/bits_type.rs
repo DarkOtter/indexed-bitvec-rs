@@ -13,12 +13,14 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+//! Type to represent bits, and basic count/rank/select functions for it.
 use super::ceil_div_u64;
 use bytes;
 use ones_or_zeros::OnesOrZeros;
 use std::cmp::min;
 use std::ops::Deref;
 
+/// Represents bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
 
@@ -35,14 +37,18 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
+    /// All of the bytes stored in the byte sequence: not just the ones actually used.
     pub fn all_bytes(&self) -> &[u8] {
         (self.0).0.deref()
     }
 
+    /// The number of bits used in the storage.
     pub fn used_bits(&self) -> u64 {
         (self.0).1
     }
 
+    /// The used bytes of the byte sequence: bear in mind some of the bits in the
+    /// last byte may be unused.
     pub fn bytes(&self) -> &[u8] {
         let all_bytes = self.all_bytes();
         debug_assert!(big_enough(all_bytes, self.used_bits()));
@@ -51,10 +57,23 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         &all_bytes[..ceil_div_u64(self.used_bits(), 8) as usize]
     }
 
+    /// Deconstruct the bits storage to get back what it was constructed from.
     pub fn decompose(self) -> (T, u64) {
         self.0
     }
 
+    /// Get the byte at a specific index.
+    ///
+    /// Returns `None` for out-of-bounds.
+    ///
+    /// ```
+    /// use indexed_bitvec::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.get(0), Some(true));
+    /// assert_eq!(bits.get(7), Some(false));
+    /// assert_eq!(bits.get(14), Some(true));
+    /// assert_eq!(bits.get(15), None);
+    /// ```
     pub fn get(&self, idx_bits: u64) -> Option<bool> {
         if idx_bits >= self.used_bits() {
             None
@@ -64,6 +83,15 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
+    /// Count the set/unset bits (*O(n)*).
+    ///
+    /// ```
+    /// use indexed_bitvec::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.count::<OneBits>(), 14);
+    /// assert_eq!(bits.count::<ZeroBits>(), 1);
+    /// assert_eq!(bits.count::<OneBits>() + bits.count::<ZeroBits>(), bits.used_bits());
+    /// ```
     pub fn count<W: OnesOrZeros>(&self) -> u64 {
         if (self.used_bits() % 8) != 0 {
             bytes::rank::<W>(self.all_bytes(), self.used_bits())
@@ -73,6 +101,25 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
+    /// Count the set/unset bits before a position in the bits (*O(n)*).
+    ///
+    /// Returns `None` it the index is out of bounds.
+    ///
+    /// ```
+    /// use indexed_bitvec::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert!((0..bits.used_bits()).all(|idx|
+    ///     bits.rank::<OneBits>(idx).unwrap()
+    ///     + bits.rank::<ZeroBits>(idx).unwrap()
+    ///     == (idx as u64)));
+    /// assert_eq!(bits.rank::<OneBits>(7), Some(7));
+    /// assert_eq!(bits.rank::<ZeroBits>(7), Some(0));
+    /// assert_eq!(bits.rank::<OneBits>(8), Some(7));
+    /// assert_eq!(bits.rank::<ZeroBits>(8), Some(1));
+    /// assert_eq!(bits.rank::<OneBits>(9), Some(8));
+    /// assert_eq!(bits.rank::<ZeroBits>(9), Some(1));
+    /// assert_eq!(bits.rank::<OneBits>(15), None);
+    /// ```
     pub fn rank<W: OnesOrZeros>(&self, idx: u64) -> Option<u64> {
         if idx >= self.used_bits() {
             None
@@ -84,6 +131,20 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
+    /// Find the position of a bit by its rank (*O(n)*).
+    ///
+    /// Returns `None` if no suitable bit is found. It is
+    /// always the case otherwise that `rank::<W>(result) == target_rank`
+    /// and `get(result) == Some(W::is_ones())`.
+    ///
+    /// ```
+    /// use indexed_bitvec::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.select::<OneBits>(6), Some(6));
+    /// assert_eq!(bits.select::<OneBits>(7), Some(8));
+    /// assert_eq!(bits.select::<ZeroBits>(0), Some(7));
+    /// assert_eq!(bits.select::<ZeroBits>(1), None);
+    /// ```
     pub fn select<W: OnesOrZeros>(&self, target_rank: u64) -> Option<u64> {
         let res = bytes::select::<W>(self.bytes(), target_rank);
         match res {
@@ -122,6 +183,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         ).expect("Checked sufficient bytes are present")
     }
 
+    /// Create a reference to these same bits.
     pub fn clone_ref(&self) -> Bits<&[u8]> {
         Bits::from(self.all_bytes(), self.used_bits()).expect("Previously checked")
     }

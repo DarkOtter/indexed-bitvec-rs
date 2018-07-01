@@ -13,6 +13,10 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+//! Create indexes used to perform fast rank & select operations on bitvectors.
+//!
+//! This crate is still under heavy development, so it will not be very stable
+//! in its interface yet.
 extern crate byteorder;
 
 #[cfg(test)]
@@ -55,12 +59,17 @@ pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
 pub mod ones_or_zeros;
 pub use ones_or_zeros::{OneBits, ZeroBits};
 
-pub mod bits_type;
-pub mod bytes;
+pub mod word;
+
+mod bytes;
+
+mod bits_type;
+pub use bits_type::Bits;
+
+mod with_offset;
+
 pub mod index_raw;
 pub mod result;
-mod with_offset;
-pub mod word;
 
 #[cfg(test)]
 mod tests {
