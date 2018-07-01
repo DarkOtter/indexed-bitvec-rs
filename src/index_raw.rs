@@ -51,12 +51,11 @@ mod size {
 
     pub const SAMPLE_LENGTH: u64 = 8192;
 
-    /// e.g. if we have N one bits, how many samples do we need?
+    /// If we have *n* one bits (or zero bits), how many samples to cover those bits?
     pub fn samples_for_bits(matching_bitcount: u64) -> usize {
         ceil_div_u64(matching_bitcount, SAMPLE_LENGTH) as usize
     }
-    /// If we have N one and zero bits,
-    /// how many words for ones and zeros samples together?
+    /// If we have *n* one and zero bits, how many words for all samples together?
     pub fn sample_words(total_bits: u64) -> usize {
         ceil_div(samples_for_bits(total_bits) + 1, 2)
     }
@@ -374,7 +373,7 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexS
     Ok(())
 }
 
-/// Returns the total count of one bits
+/// Build the inner l1l2 index and return the total count of set bits.
 fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u64 {
     debug_assert!(data_chunk.used_bits() > 0);
     debug_assert!(data_chunk.used_bits() <= size::BITS_PER_L0_BLOCK);
@@ -436,7 +435,7 @@ fn build_samples<W: OnesOrZeros>(
         Some(WithOffset::at_origin(samples)),
         |samples, (l0_idx, (rank_start, rank_end))| {
             let n_samples_seen_end = size::samples_for_bits(rank_end);
-            let here_samples = WithOffset::take_upto_offset(samples, n_samples_seen_end)
+            let here_samples = WithOffset::take_upto_offset_from_origin(samples, n_samples_seen_end)
                 .expect("Should never run out of samples");
             if here_samples.len() == 0 {
                 None
@@ -486,7 +485,7 @@ fn build_samples_inner<W: OnesOrZeros>(
     let samples_before_mid_block =
         size::samples_for_bits(inner_l1l2_index.rank_of_block::<W>(mid_block) + base_rank);
 
-    let (before_mid, after_mid) = samples.split_at_mut_by_offset(samples_before_mid_block);
+    let (before_mid, after_mid) = samples.split_at_mut_from_origin(samples_before_mid_block);
 
     // TODO: These calls could be parallelised (divide-and-conquer)
     build_samples_inner::<W>(
@@ -583,8 +582,11 @@ pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Optio
     rank_ones(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
 }
 
-/// Assumes that for some i s.t. from <= i < until: check(j) <=> j >= i
-/// This returns such i.
+/// Find the index *i* which partitions the input space into values
+/// satisfying the check and those which don't.
+///
+/// This assumes there is some *i* which is at least `from` and less
+/// than `until` such that `check(j) == (j >= i)`.
 fn binary_search<F>(from: usize, until: usize, check: F) -> usize
 where
     F: Fn(usize) -> bool,
@@ -612,6 +614,11 @@ where
     return false_up_to;
 }
 
+/// Find the position of a bit by its rank using the index (*O(log n)*).
+///
+/// Returns `None` if no suitable bit is found. It is
+/// always the case otherwise that `rank::<W>(result) == target_rank`
+/// and `get(result) == Some(W::is_ones())`.
 pub fn select<W: OnesOrZeros>(index: &[u64], all_bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
     if all_bits.used_bits() == 0 {
         return None;

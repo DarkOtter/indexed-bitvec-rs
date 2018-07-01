@@ -13,6 +13,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+//! Functions to run bit operations on bits stored as bytes (MSB first).
 use ones_or_zeros::OnesOrZeros;
 use word::{select_ones_u16, Word};
 
@@ -112,7 +113,7 @@ pub fn rank<W: OnesOrZeros>(data: &[u8], idx_bits: u64) -> Option<u64> {
     rank_ones(data, idx_bits).map(|count_ones| W::convert_count(count_ones, idx_bits))
 }
 
-/// If it returns Err it returns the total count for the data.
+/// Select a bit by rank within bytes one byte at a time, or return the total count.
 fn select_by_bytes<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64> {
     let mut running_rank = 0u64;
     let mut running_index = 0u64;

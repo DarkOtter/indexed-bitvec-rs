@@ -13,8 +13,10 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+//! Tools for working with a single (64bit) word as bits.
 use ones_or_zeros::OnesOrZeros;
 
+/// The 64 bits of a single word, as a sequence from MSB to LSB.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Word(u64);
 
@@ -31,13 +33,16 @@ impl From<Word> for u64 {
 }
 
 impl Word {
+    /// The word where all bits are zero.
     pub const ZEROS: Self = Word(0);
 
+    /// The number of bits in one word (always 64).
     #[inline]
-    fn len(self) -> usize {
+    pub fn len(self) -> usize {
         64
     }
 
+    /// Check that an index is in bounds.
     #[inline]
     fn index_check(self, idx: usize) -> Option<()> {
         if idx >= self.len() {
@@ -47,12 +52,18 @@ impl Word {
         }
     }
 
+    /// Get a single bit by index.
+    ///
+    /// Returns `None` if the index is out of bounds.
     #[inline]
     pub fn get(self, idx: usize) -> Option<bool> {
         self.index_check(idx)?;
         Some((u64::from(self) & (1 << (63 - idx))) > 0)
     }
 
+    /// Set a single bit by creating a new word.
+    ///
+    /// Returns `None` if the index is out of bounds.
     pub fn set_copy(self, idx: usize, to: bool) -> Option<Self> {
         self.index_check(idx)?;
         let mask = 1 << (63 - idx);
@@ -61,6 +72,9 @@ impl Word {
         Some(res.into())
     }
 
+    /// Set a single bit in place.
+    ///
+    /// Returns `None` if the index is out of bounds.
     #[inline]
     pub fn set(&mut self, idx: usize, to: bool) -> Result<(), &'static str> {
         match self.set_copy(idx, to) {
@@ -90,12 +104,13 @@ pub(crate) fn select_ones_u16(from: u16, mut nth: u32) -> u32 {
 }
 
 impl Word {
+    /// Invert all the bits in the word.
     #[inline]
     pub fn complement(self) -> Self {
         Self::from(!u64::from(self))
     }
 
-    fn convert_to_ones<W: OnesOrZeros>(self) -> Self {
+    fn desired_bits_as_ones<W: OnesOrZeros>(self) -> Self {
         if W::is_ones() {
             self
         } else {
@@ -103,16 +118,17 @@ impl Word {
         }
     }
 
-    pub fn count_ones(self) -> u32 {
+    fn count_ones(self) -> u32 {
         u64::from(self).count_ones()
     }
 
+    /// Count the set/unset bits.
     pub fn count<W: OnesOrZeros>(self) -> u32 {
-        self.convert_to_ones::<W>().count_ones()
+        self.desired_bits_as_ones::<W>().count_ones()
     }
 
     #[inline]
-    pub fn rank_ones(self, idx: usize) -> Option<u32> {
+    fn rank_ones(self, idx: usize) -> Option<u32> {
         if idx == 0 {
             return Some(0);
         };
@@ -121,12 +137,15 @@ impl Word {
         Some(to_count.count_ones())
     }
 
+    /// Count the set/unset bits before a position in the bits.
+    ///
+    /// Returns `None` it the index is out of bounds.
     #[inline]
     pub fn rank<W: OnesOrZeros>(self, idx: usize) -> Option<u32> {
-        self.convert_to_ones::<W>().rank_ones(idx)
+        self.desired_bits_as_ones::<W>().rank_ones(idx)
     }
 
-    pub fn select_ones(self, nth: u32) -> Option<u32> {
+    fn select_ones(self, nth: u32) -> Option<u32> {
         let rank_32 = self.rank_ones(32)?;
         let rank_16 = self.rank_ones(16)?;
         let rank_48 = self.rank_ones(48)?;
@@ -152,8 +171,13 @@ impl Word {
         Some(res)
     }
 
+    /// Find the position of a bit by its rank.
+    ///
+    /// Returns `None` if no suitable bit is found. It is
+    /// always the case otherwise that `rank::<W>(result) == target_rank`
+    /// and `get(result) == Some(W::is_ones())`.
     pub fn select<W: OnesOrZeros>(self, nth: u32) -> Option<u32> {
-        self.convert_to_ones::<W>().select_ones(nth)
+        self.desired_bits_as_ones::<W>().select_ones(nth)
     }
 }
 
