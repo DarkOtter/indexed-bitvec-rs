@@ -27,12 +27,3 @@ pub use indexed_bitvec_core::Bits;
 
 mod indexed_bits;
 pub use indexed_bits::IndexedBits;
-
-/*
-#[cfg(test)]
-extern crate rand;
-
-#[cfg(test)]
-#[macro_use]
-extern crate quickcheck;
-*/
