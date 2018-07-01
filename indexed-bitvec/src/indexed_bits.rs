@@ -27,6 +27,9 @@ pub struct IndexedBits<T: Deref<Target = [u8]>> {
 
 impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Build the index for a sequence of bits.
+    ///
+    /// This is an expensive operation which will examine
+    /// all of the data input.
     pub fn build_index(bits: Bits<T>) -> Self {
         let index = {
             let bits_as_u8 = bits.clone_ref();
