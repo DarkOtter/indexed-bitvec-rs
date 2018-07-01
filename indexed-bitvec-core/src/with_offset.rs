@@ -66,7 +66,7 @@ impl<'a, T> WithOffset<&'a mut [T]> {
     }
 }
 
-use std::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut};
 
 impl<T> Deref for WithOffset<T> {
     type Target = T;

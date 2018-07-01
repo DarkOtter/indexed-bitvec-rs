@@ -1,0 +1,9 @@
+[package]
+name = "indexed_bitvec_core"
+version = "0.1.0"
+authors = ["DarkOtter <>"]
+license = "Apache-2.0"
+
+[dev-dependencies]
+rand = "0.4"
+quickcheck = "0.6"

@@ -37,7 +37,7 @@ fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
 }
 
 fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
-    use std::mem::{align_of, size_of};
+    use core::mem::{align_of, size_of};
 
     if data.len() < size_of::<u64>() || data.len() < align_of::<u64>() {
         return Err(data);
@@ -61,7 +61,7 @@ fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     let (data, post_partial) = data.split_at(n_whole_words * size_of::<u64>());
 
     let data: &[u64] = unsafe {
-        use std::slice::from_raw_parts;
+        use core::slice::from_raw_parts;
         let ptr = data.as_ptr() as *const u64;
         from_raw_parts(ptr, n_whole_words)
     };
@@ -178,6 +178,7 @@ pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
     use quickcheck;
 

@@ -17,10 +17,10 @@
 use super::ceil_div_u64;
 use bytes;
 use ones_or_zeros::OnesOrZeros;
-use std::cmp::min;
-use std::ops::Deref;
+use core::cmp::min;
+use core::ops::Deref;
 
-/// Represents bits stored as a sequence of bytes (most significant bit first).
+/// Bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
 
@@ -67,7 +67,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` for out-of-bounds.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(7), Some(false));
@@ -86,7 +86,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Count the set/unset bits (*O(n)*).
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count::<OneBits>(), 14);
     /// assert_eq!(bits.count::<ZeroBits>(), 1);
@@ -106,7 +106,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` it the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.used_bits()).all(|idx|
     ///     bits.rank::<OneBits>(idx).unwrap()
@@ -124,10 +124,9 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         if idx >= self.used_bits() {
             None
         } else {
-            Some(
-                bytes::rank::<W>(self.all_bytes(), idx)
-                    .expect("Internally called rank out-of-range"),
-            )
+            Some(bytes::rank::<W>(self.all_bytes(), idx).expect(
+                "Internally called rank out-of-range",
+            ))
         }
     }
 
@@ -138,7 +137,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// and `get(result) == Some(W::is_ones())`.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.select::<OneBits>(6), Some(6));
     /// assert_eq!(bits.select::<OneBits>(7), Some(8));
@@ -163,20 +162,19 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     pub fn chunks_by_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
         let available_bits = self.used_bits();
         let bits_per_chunk = (bytes_per_chunk as u64) * 8;
-        self.bytes()
-            .chunks(bytes_per_chunk)
-            .enumerate()
-            .map(move |(i, chunk)| {
+        self.bytes().chunks(bytes_per_chunk).enumerate().map(
+            move |(i, chunk)| {
                 let used_bits = i as u64 * bits_per_chunk;
                 let bits = min(available_bits - used_bits, bits_per_chunk);
                 Bits::from(chunk, bits).expect("Size invariant violated")
-            })
+            },
+        )
     }
 
     /// Drop the first *n* bytes of bits from the front of the sequence.
     ///
     /// ```
-    /// use indexed_bitvec::*;
+    /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFF, 0x00], 16).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(8), Some(false));
@@ -188,10 +186,8 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         if n_bytes >= bytes.len() {
             panic!("Index out of bounds: tried to drop all of the bits");
         }
-        Bits::from(
-            &bytes[n_bytes..],
-            self.used_bits() - (n_bytes as u64 * 8),
-        ).expect("Checked sufficient bytes are present")
+        Bits::from(&bytes[n_bytes..], self.used_bits() - (n_bytes as u64 * 8))
+            .expect("Checked sufficient bytes are present")
     }
 
     /// Create a reference to these same bits.
@@ -203,6 +199,8 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::boxed::Box;
+    use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
     use quickcheck;
     use quickcheck::Arbitrary;
