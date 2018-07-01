@@ -20,7 +20,7 @@ use ones_or_zeros::OnesOrZeros;
 use core::cmp::min;
 use core::ops::Deref;
 
-/// Represents bits stored as a sequence of bytes (most significant bit first).
+/// Bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
 
@@ -124,10 +124,9 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         if idx >= self.used_bits() {
             None
         } else {
-            Some(
-                bytes::rank::<W>(self.all_bytes(), idx)
-                    .expect("Internally called rank out-of-range"),
-            )
+            Some(bytes::rank::<W>(self.all_bytes(), idx).expect(
+                "Internally called rank out-of-range",
+            ))
         }
     }
 
@@ -163,14 +162,13 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     pub fn chunks_by_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
         let available_bits = self.used_bits();
         let bits_per_chunk = (bytes_per_chunk as u64) * 8;
-        self.bytes()
-            .chunks(bytes_per_chunk)
-            .enumerate()
-            .map(move |(i, chunk)| {
+        self.bytes().chunks(bytes_per_chunk).enumerate().map(
+            move |(i, chunk)| {
                 let used_bits = i as u64 * bits_per_chunk;
                 let bits = min(available_bits - used_bits, bits_per_chunk);
                 Bits::from(chunk, bits).expect("Size invariant violated")
-            })
+            },
+        )
     }
 
     /// Drop the first *n* bytes of bits from the front of the sequence.
@@ -188,10 +186,8 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         if n_bytes >= bytes.len() {
             panic!("Index out of bounds: tried to drop all of the bits");
         }
-        Bits::from(
-            &bytes[n_bytes..],
-            self.used_bits() - (n_bytes as u64 * 8),
-        ).expect("Checked sufficient bytes are present")
+        Bits::from(&bytes[n_bytes..], self.used_bits() - (n_bytes as u64 * 8))
+            .expect("Checked sufficient bytes are present")
     }
 
     /// Create a reference to these same bits.

@@ -25,6 +25,9 @@ pub use indexed_bitvec_core::ones_or_zeros;
 pub use indexed_bitvec_core::{OneBits, ZeroBits};
 pub use indexed_bitvec_core::Bits;
 
+mod indexed_bits;
+pub use indexed_bits::IndexedBits;
+
 /*
 #[cfg(test)]
 extern crate rand;
