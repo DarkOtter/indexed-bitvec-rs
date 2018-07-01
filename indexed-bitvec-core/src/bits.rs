@@ -17,8 +17,8 @@
 use super::ceil_div_u64;
 use bytes;
 use ones_or_zeros::OnesOrZeros;
-use std::cmp::min;
-use std::ops::Deref;
+use core::cmp::min;
+use core::ops::Deref;
 
 /// Represents bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Debug)]
@@ -203,6 +203,8 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::boxed::Box;
+    use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
     use quickcheck;
     use quickcheck::Arbitrary;

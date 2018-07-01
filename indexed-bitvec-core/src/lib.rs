@@ -13,10 +13,17 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-//! Create indexes used to perform fast rank & select operations on bitvectors.
+//! Core operations to create indexes used to perform
+//! fast rank & select operations on bitvectors.
 //!
-//! This crate is still under heavy development, so it will not be very stable
-//! in its interface yet.
+//! This crate is still under heavy development,
+//! so it will not be very stable in its interface yet.
+#![no_std]
+
+#[cfg(test)]
+#[macro_use]
+extern crate std;
+
 extern crate byteorder;
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use super::with_offset::WithOffset;
 use super::{ceil_div, ceil_div_u64};
 use super::Bits;
 use ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
-use std::cmp::min;
+use core::cmp::min;
 
 mod size {
     use super::*;
@@ -150,13 +150,14 @@ mod structure {
         }
     }
 
+    use core::mem::{align_of, size_of};
+
     fn cast_to_l1l2<'a>(data: &'a [u64]) -> &'a [L1L2Entry] {
-        use std::mem::{align_of, size_of};
         debug_assert_eq!(size_of::<u64>(), size_of::<L1L2Entry>());
         debug_assert_eq!(align_of::<u64>(), align_of::<L1L2Entry>());
 
         unsafe {
-            use std::slice::from_raw_parts;
+            use core::slice::from_raw_parts;
             let n = data.len();
             let ptr = data.as_ptr() as *mut L1L2Entry;
             from_raw_parts(ptr, n)
@@ -164,12 +165,11 @@ mod structure {
     }
 
     fn cast_to_l1l2_mut<'a>(data: &'a mut [u64]) -> &'a mut [L1L2Entry] {
-        use std::mem::{align_of, size_of};
         debug_assert_eq!(size_of::<u64>(), size_of::<L1L2Entry>());
         debug_assert_eq!(align_of::<u64>(), align_of::<L1L2Entry>());
 
         unsafe {
-            use std::slice::from_raw_parts_mut;
+            use core::slice::from_raw_parts_mut;
             let n = data.len();
             let ptr = data.as_mut_ptr() as *mut L1L2Entry;
             from_raw_parts_mut(ptr, n)
@@ -177,12 +177,11 @@ mod structure {
     }
 
     fn cast_to_samples<'a>(data: &'a [u64]) -> &'a [SampleEntry] {
-        use std::mem::{align_of, size_of};
         debug_assert_eq!(size_of::<u64>(), 2 * size_of::<SampleEntry>());
         debug_assert_eq!(align_of::<u64>(), 2 * align_of::<SampleEntry>());
 
         unsafe {
-            use std::slice::from_raw_parts;
+            use core::slice::from_raw_parts;
             let n = data.len() * 2;
             let ptr = data.as_ptr() as *const SampleEntry;
             from_raw_parts(ptr, n)
@@ -190,12 +189,11 @@ mod structure {
     }
 
     fn cast_to_samples_mut<'a>(data: &'a mut [u64]) -> &'a mut [SampleEntry] {
-        use std::mem::{align_of, size_of};
         debug_assert_eq!(size_of::<u64>(), 2 * size_of::<SampleEntry>());
         debug_assert_eq!(align_of::<u64>(), 2 * align_of::<SampleEntry>());
 
         unsafe {
-            use std::slice::from_raw_parts_mut;
+            use core::slice::from_raw_parts_mut;
             let n = data.len() * 2;
             let ptr = data.as_mut_ptr() as *mut SampleEntry;
             from_raw_parts_mut(ptr, n)
@@ -702,8 +700,8 @@ pub fn select<W: OnesOrZeros>(index: &[u64], all_bits: Bits<&[u8]>, target_rank:
 
 #[cfg(test)]
 mod tests {
-    use super::super::ceil_div_u64;
     use super::*;
+    use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
 
     #[test]

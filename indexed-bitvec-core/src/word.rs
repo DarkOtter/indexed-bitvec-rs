@@ -184,6 +184,8 @@ impl Word {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::boxed::Box;
+    use std::vec::Vec;
     use quickcheck;
     use quickcheck::Arbitrary;
 
