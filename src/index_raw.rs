@@ -22,7 +22,7 @@
 
 use super::with_offset::WithOffset;
 use super::{ceil_div, ceil_div_u64};
-use bits_type::Bits;
+use super::Bits;
 use ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 use std::cmp::min;
 

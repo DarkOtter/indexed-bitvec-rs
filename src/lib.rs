@@ -63,8 +63,8 @@ pub mod word;
 
 mod bytes;
 
-mod bits_type;
-pub use bits_type::Bits;
+mod bits;
+pub use bits::Bits;
 
 mod with_offset;
 

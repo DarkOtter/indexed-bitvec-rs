@@ -13,6 +13,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+//! Types and traits used to make functions generic over set/unset bits.
 
 /// Supply to generic functions to work with/count set bits (ones).
 pub enum OneBits {}
