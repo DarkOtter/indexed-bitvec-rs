@@ -24,8 +24,6 @@
 #[macro_use]
 extern crate std;
 
-extern crate byteorder;
-
 #[cfg(test)]
 extern crate rand;
 
