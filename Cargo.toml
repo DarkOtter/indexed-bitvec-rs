@@ -9,3 +9,8 @@ members = [
 lto = true
 codegen-units = 1
 incremental = false
+
+[profile.bench]
+lto = true
+codegen-units = 1
+incremental = false
