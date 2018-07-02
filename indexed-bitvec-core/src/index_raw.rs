@@ -66,6 +66,7 @@ mod size {
 
     pub const L1_BLOCKS_PER_L0_BLOCK: usize = (BITS_PER_L0_BLOCK / BITS_PER_L1_BLOCK) as usize;
     pub const L2_BLOCKS_PER_L1_BLOCK: usize = (BITS_PER_L1_BLOCK / BITS_PER_L2_BLOCK) as usize;
+    pub const L2_BLOCKS_PER_L0_BLOCK: usize = L2_BLOCKS_PER_L1_BLOCK * L1_BLOCKS_PER_L0_BLOCK;
 
     #[cfg(test)]
     mod tests {
@@ -111,10 +112,8 @@ mod structure {
         pub fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
             debug_assert!(sub_ranks.iter().all(|&x| (x & !0x03FF) == 0));
             L1L2Entry(
-                ((base_rank as u64) << 32)
-                    | ((sub_ranks[0] as u64) << 22)
-                    | ((sub_ranks[1] as u64) << 12)
-                    | ((sub_ranks[2] as u64) << 2),
+                ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
+                    ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
             )
         }
 
@@ -272,8 +271,12 @@ mod structure {
         pub fn inner_index(self, all_bits: Bits<&[u8]>, l0_idx: usize) -> L1L2Index<'a> {
             let start_idx = l0_idx * size::L1_BLOCKS_PER_L0_BLOCK;
             let end_idx = min(start_idx + size::L1_BLOCKS_PER_L0_BLOCK, self.0.len());
-            let block_count = size::blocks(all_bits.used_bits()) - start_idx * size::L2_BLOCKS_PER_L1_BLOCK;
-            L1L2Index { block_count, index_data: &self.0[start_idx..end_idx] }
+            let block_count_to_end = size::blocks(all_bits.used_bits()) -
+                start_idx * size::L2_BLOCKS_PER_L1_BLOCK;
+            L1L2Index {
+                block_count: min(block_count_to_end, size::L2_BLOCKS_PER_L0_BLOCK),
+                index_data: &self.0[start_idx..end_idx],
+            }
         }
     }
 
@@ -430,11 +433,19 @@ fn build_samples<W: OnesOrZeros>(
     };
 
     let chunks_with_samples = l0_chunks_start_end_rank.enumerate().scan(
-        Some(WithOffset::at_origin(samples)),
-        |samples, (l0_idx, (rank_start, rank_end))| {
+        Some(
+            WithOffset::at_origin(
+                samples,
+            ),
+        ),
+        |samples,
+         (l0_idx,
+          (rank_start,
+           rank_end))| {
             let n_samples_seen_end = size::samples_for_bits(rank_end);
-            let here_samples = WithOffset::take_upto_offset_from_origin(samples, n_samples_seen_end)
-                .expect("Should never run out of samples");
+            let here_samples =
+                WithOffset::take_upto_offset_from_origin(samples, n_samples_seen_end)
+                    .expect("Should never run out of samples");
             if here_samples.len() == 0 {
                 None
             } else {
@@ -566,9 +577,9 @@ fn rank_ones(index: &[u64], all_bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
 
     let scan_skip_bytes = l0_idx * size::BYTES_PER_L0_BLOCK + block_idx * size::BYTES_PER_L2_BLOCK;
     let scan_bits = all_bits.drop_bytes(scan_skip_bytes);
-    let scanned_rank = scan_bits
-        .rank::<OneBits>(block_offset)
-        .expect("Already checked size");
+    let scanned_rank = scan_bits.rank::<OneBits>(block_offset).expect(
+        "Already checked size",
+    );
     Some(l0_rank + block_rank + scanned_rank)
 }
 
@@ -617,7 +628,11 @@ where
 /// Returns `None` if no suitable bit is found. It is
 /// always the case otherwise that `rank::<W>(result) == target_rank`
 /// and `get(result) == Some(W::is_ones())`.
-pub fn select<W: OnesOrZeros>(index: &[u64], all_bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
+pub fn select<W: OnesOrZeros>(
+    index: &[u64],
+    all_bits: Bits<&[u8]>,
+    target_rank: u64,
+) -> Option<u64> {
     if all_bits.used_bits() == 0 {
         return None;
     }
@@ -678,11 +693,12 @@ pub fn select<W: OnesOrZeros>(index: &[u64], all_bits: Bits<&[u8]>, target_rank:
     };
 
     let block_idx = {
-        let following_block_idx = binary_search(
-            block_idx_should_be_at_least,
-            block_idx_should_be_less_than,
-            |idx| inner_l1l2_index.rank_of_block::<W>(idx) > target_rank_in_l0_block,
-        );
+        let following_block_idx =
+            binary_search(
+                block_idx_should_be_at_least,
+                block_idx_should_be_less_than,
+                |idx| inner_l1l2_index.rank_of_block::<W>(idx) > target_rank_in_l0_block,
+            );
         debug_assert!(following_block_idx > 0);
         following_block_idx - 1
     };
@@ -691,9 +707,9 @@ pub fn select<W: OnesOrZeros>(index: &[u64], all_bits: Bits<&[u8]>, target_rank:
 
     let scan_skip_bytes = l0_idx * size::BYTES_PER_L0_BLOCK + block_idx * size::BYTES_PER_L2_BLOCK;
     let scan_bits = all_bits.drop_bytes(scan_skip_bytes);
-    let scanned_idx = scan_bits
-        .select::<W>(target_rank_in_block)
-        .expect("Already checked against total count");
+    let scanned_idx = scan_bits.select::<W>(target_rank_in_block).expect(
+        "Already checked against total count",
+    );
 
     Some(scan_skip_bytes as u64 * 8 + scanned_idx)
 }
