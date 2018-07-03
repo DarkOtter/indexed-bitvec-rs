@@ -16,6 +16,7 @@ Timings were made:
 - Compiled in release mode
 - With LTO, codegen-units 1, non-incremental build
 - With RUSTFLAGS='-C target-cpu=native'
+- CPU: Intel(R) Core(TM) i7-7700K CPU @ 4.20GHz
 
 | Operation   | Time   |
 |-------------|--------|
