@@ -65,6 +65,8 @@ pub mod ones_or_zeros;
 pub use ones_or_zeros::{OneBits, ZeroBits};
 
 mod word;
+pub use word::Word;
+
 mod bytes;
 
 mod bits;

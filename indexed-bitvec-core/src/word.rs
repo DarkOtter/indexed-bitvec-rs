@@ -45,11 +45,7 @@ impl Word {
     /// Check that an index is in bounds.
     #[inline]
     fn index_check(self, idx: usize) -> Option<()> {
-        if idx >= self.len() {
-            None
-        } else {
-            Some(())
-        }
+        if idx >= self.len() { None } else { Some(()) }
     }
 
     /// Get a single bit by index.
@@ -74,12 +70,12 @@ impl Word {
 
     /// Set a single bit in place.
     ///
-    /// Returns `None` if the index is out of bounds.
+    /// Returns `None` (and makes no change) if the index is out of bounds.
     #[inline]
-    pub fn set(&mut self, idx: usize, to: bool) -> Result<(), &'static str> {
+    pub fn set(&mut self, idx: usize, to: bool) -> Option<()> {
         match self.set_copy(idx, to) {
-            None => Err("index out of bounds"),
-            Some(rep) => Ok(*self = rep),
+            None => None,
+            Some(rep) => Some(*self = rep),
         }
     }
 }
@@ -139,7 +135,7 @@ impl Word {
 
     /// Count the set/unset bits before a position in the bits.
     ///
-    /// Returns `None` it the index is out of bounds.
+    /// Returns `None` if the index is out of bounds.
     #[inline]
     pub fn rank<W: OnesOrZeros>(self, idx: usize) -> Option<u32> {
         self.desired_bits_as_ones::<W>().rank_ones(idx)
@@ -271,7 +267,7 @@ mod tests {
         fn bounds_check_set(x: Word, to: bool) -> bool {
             let mut x = x;
             let len = x.len();
-            x.set(len, to).is_err()
+            x.set(len, to).is_none()
         }
 
         fn test_complement(x: Word) -> bool {
