@@ -350,7 +350,6 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexS
     bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
         .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
         .zip(l0_index.iter_mut())
-    // TODO: This loop could be parallelised
         .for_each(|((bits_chunk, l1l2_chunk), l0_entry)| {
             *l0_entry = build_inner_l1l2(l1l2_chunk, bits_chunk)
         });
@@ -367,7 +366,6 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexS
     // Build the select index
     let (samples_ones, samples_zeros) =
         structure::split_samples_mut(index_after_l1l2, bits, total_count_ones);
-    // TODO: These calls could be parallelised (divide-and-conquer)
     build_samples::<OneBits>(l0_index, l1l2_index, bits, samples_ones);
     build_samples::<ZeroBits>(l0_index, l1l2_index, bits, samples_zeros);
 
@@ -380,9 +378,9 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
     debug_assert!(data_chunk.used_bits() <= size::BITS_PER_L0_BLOCK);
     debug_assert!(l1l2_index.len() == size::l1l2(data_chunk.used_bits()));
 
-    data_chunk.chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
+    data_chunk
+        .chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
         .zip(l1l2_index.iter_mut())
-    // TODO: This loop could be parallelised
         .for_each(|(l1_chunk, write_to)| {
             let mut counts = [0u16; 4];
             l1_chunk
@@ -458,11 +456,15 @@ fn build_samples<W: OnesOrZeros>(
         },
     );
 
-    chunks_with_samples
-    // TODO: This loop could be parallelised
-        .for_each(|(start_rank, inner_l1l2_index, samples)| {
-            build_samples_inner::<W>(start_rank, inner_l1l2_index, 0, inner_l1l2_index.len(), samples)
-        })
+    chunks_with_samples.for_each(|(start_rank, inner_l1l2_index, samples)| {
+        build_samples_inner::<W>(
+            start_rank,
+            inner_l1l2_index,
+            0,
+            inner_l1l2_index.len(),
+            samples,
+        )
+    })
 }
 
 fn build_samples_inner<W: OnesOrZeros>(
@@ -496,7 +498,6 @@ fn build_samples_inner<W: OnesOrZeros>(
 
     let (before_mid, after_mid) = samples.split_at_mut_from_origin(samples_before_mid_block);
 
-    // TODO: These calls could be parallelised (divide-and-conquer)
     build_samples_inner::<W>(
         base_rank,
         inner_l1l2_index,
