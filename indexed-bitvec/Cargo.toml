@@ -6,3 +6,11 @@ license = "Apache-2.0"
 
 [dependencies.indexed_bitvec_core]
 path = "../indexed-bitvec-core"
+
+[dev-dependencies]
+rand = "0.4"
+criterion = "0.2"
+
+[[bench]]
+name = "operations"
+harness = false
