@@ -723,10 +723,27 @@ mod tests {
 
     #[test]
     fn small_indexed_tests() {
-        use rand::{Rng, SeedableRng, XorShiftRng};
+        use rand::{SeedableRng, XorShiftRng, RngCore, Rng};
         let n_bits: u64 = (1 << 19) - 1;
         let n_bytes: usize = ceil_div_u64(n_bits, 8) as usize;
-        let seed = [42, 349107693, 1723721493, 1356827498];
+        let seed = [
+            42,
+            73,
+            197,
+            231,
+            255,
+            43,
+            87,
+            05,
+            50,
+            13,
+            74,
+            107,
+            195,
+            231,
+            5,
+            1,
+        ];
         let mut rng = XorShiftRng::from_seed(seed);
         let data = {
             let mut data = vec![0u8; n_bytes];

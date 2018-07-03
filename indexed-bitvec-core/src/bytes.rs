@@ -47,11 +47,7 @@ fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     let alignment_offset = {
         let need_alignment = align_of::<u64>();
         let rem = (data.as_ptr() as usize) % need_alignment;
-        if rem > 0 {
-            need_alignment - rem
-        } else {
-            0
-        }
+        if rem > 0 { need_alignment - rem } else { 0 }
     };
 
     let (pre_partial, data) = data.split_at(alignment_offset);
@@ -85,9 +81,8 @@ pub fn count_ones(data: &[u8]) -> u64 {
     match bytes_as_u64s(data) {
         Err(data) => count_ones_bytes_slow(data),
         Ok((pre_partial, data, post_partial)) => {
-            count_ones_bytes_slow(pre_partial)
-                + count_ones_words(data)
-                + count_ones_bytes_slow(post_partial)
+            count_ones_bytes_slow(pre_partial) + count_ones_words(data) +
+                count_ones_bytes_slow(post_partial)
         }
     }
 }
@@ -180,7 +175,6 @@ mod tests {
     use super::*;
     use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
-    use quickcheck;
 
     #[test]
     fn test_get() {
@@ -229,11 +223,16 @@ mod tests {
         res
     }
 
+    fn random_data() -> Vec<u8> {
+        use rand::{thread_rng, RngCore};
+        let mut res = vec![0u8; 3247];
+        thread_rng().fill_bytes(&mut res);
+        res
+    }
+
     #[test]
     fn test_rank() {
-        use rand::thread_rng;
-        let mut gen = quickcheck::StdGen::new(thread_rng(), 1024);
-        let data = <Vec<u8> as quickcheck::Arbitrary>::arbitrary(&mut gen);
+        let data = random_data();
 
         let mut rank_ones = 0u64;
         let mut rank_zeros = 0u64;
@@ -273,9 +272,7 @@ mod tests {
 
     #[test]
     fn test_select() {
-        use rand::thread_rng;
-        let mut gen = quickcheck::StdGen::new(thread_rng(), 1024);
-        let data = <Vec<u8> as quickcheck::Arbitrary>::arbitrary(&mut gen);
+        let data = random_data();
 
         do_test_select::<OneBits>(&data);
         do_test_select::<ZeroBits>(&data);
