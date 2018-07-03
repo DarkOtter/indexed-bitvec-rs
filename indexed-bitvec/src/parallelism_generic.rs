@@ -13,57 +13,39 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-//! Trait to allow some computations to be generic over parallelism.
+//! Operations to create indexes used to perform
+//! fast rank & select operations on bitvectors.
 //!
-//! This is done so that the building can be defined without relying
-//! on stdlib, and we can layer parallelism on top in another crate.
+//! This crate is still under heavy development,
+//! so it will not be very stable in its interface yet.
+pub use super::indexed_bitvec_core::parallelism_generic::*;
+use super::rayon::{join, scope};
 
-pub trait ExecutionMethod {
-    /// Run both closures which are independent. Expected to be cheap.
-    fn do_both<F, G>(f: F, g: G)
-    where
-        F: FnOnce() + Send,
-        G: FnOnce() + Send;
+/// Supply to generic functions to execute with some efficient parallelism.
+pub enum PartiallyParallel {}
+/// Supply to generic functions to execute with maximum parallelism.
+pub enum FullyParallel {}
 
-    /// Run many large computations which are independent.
-    fn do_many_large<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync;
-
-    /// Run many small computations which are independent.
-    fn do_many_small<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync;
-}
-
-/// Supply to generic functions to execute sequentially (no parallelism).
-pub enum Sequential {}
-
-impl ExecutionMethod for Sequential {
+impl ExecutionMethod for PartiallyParallel {
     #[inline(always)]
     fn do_both<F, G>(f: F, g: G)
     where
         F: FnOnce() + Send,
         G: FnOnce() + Send,
     {
-        f();
-        g();
+        join(f, g);
     }
 
     #[inline(always)]
     fn do_many_large<T, I, F>(iter: I, f: F)
     where
-        I: IntoIterator<Item = T>,
+        I: IntoIterator<Item = T> + Send,
         T: Send,
         F: Fn(T) + Send + Sync,
     {
-        for x in iter {
-            f(x);
-        }
+        scope(|s| for x in iter {
+            s.spawn(|_| f(x));
+        });
     }
 
     #[inline(always)]
@@ -73,8 +55,37 @@ impl ExecutionMethod for Sequential {
         T: Send,
         F: Fn(T) + Send + Sync,
     {
-        for x in iter {
-            f(x);
-        }
+        Sequential::do_many_small(iter, f);
+    }
+}
+
+impl ExecutionMethod for FullyParallel {
+    #[inline(always)]
+    fn do_both<F, G>(f: F, g: G)
+    where
+        F: FnOnce() + Send,
+        G: FnOnce() + Send,
+    {
+        PartiallyParallel::do_both(f, g);
+    }
+
+    #[inline(always)]
+    fn do_many_large<T, I, F>(iter: I, f: F)
+    where
+        I: IntoIterator<Item = T> + Send,
+        T: Send,
+        F: Fn(T) + Send + Sync,
+    {
+        PartiallyParallel::do_many_large(iter, f);
+    }
+
+    #[inline(always)]
+    fn do_many_small<T, I, F>(iter: I, f: F)
+    where
+        I: IntoIterator<Item = T> + Send,
+        T: Send,
+        F: Fn(T) + Send + Sync,
+    {
+        PartiallyParallel::do_many_large(iter, f);
     }
 }

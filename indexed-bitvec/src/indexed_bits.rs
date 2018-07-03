@@ -15,8 +15,9 @@
 */
 //! A bitvector with an index to allow fast rank and select.
 use std::ops::{Deref, DerefMut};
-use indexed_bitvec_core::*;
+use indexed_bitvec_core::{Bits, index_raw};
 use ones_or_zeros::OnesOrZeros;
+use super::parallelism_generic::{ExecutionMethod, Sequential, PartiallyParallel, FullyParallel};
 
 /// Bits stored with extra index data for fast rank and select.
 #[derive(Clone, Debug)]
@@ -28,7 +29,7 @@ pub struct IndexedBits<T: Deref<Target = [u8]>> {
 impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     fn build_index_generic<P>(bits: Bits<T>) -> Self
     where
-        P: parallelism_generic::ExecutionMethod,
+        P: ExecutionMethod,
     {
         let index = {
             let bits_as_u8 = bits.clone_ref();
@@ -46,7 +47,15 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// This is an expensive operation which will examine
     /// all of the data input.
     pub fn build_index(bits: Bits<T>) -> Self {
-        Self::build_index_generic::<parallelism_generic::Sequential>(bits)
+        Self::build_index_generic::<Sequential>(bits)
+    }
+
+    pub fn build_index_partially_parallel(bits: Bits<T>) -> Self {
+        Self::build_index_generic::<PartiallyParallel>(bits)
+    }
+
+    pub fn build_index_fully_parallel(bits: Bits<T>) -> Self {
+        Self::build_index_generic::<FullyParallel>(bits)
     }
 
     fn index(&self) -> &[u64] {

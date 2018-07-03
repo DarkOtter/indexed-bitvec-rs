@@ -18,12 +18,15 @@
 //!
 //! This crate is still under heavy development,
 //! so it will not be very stable in its interface yet.
+extern crate rayon;
 
 extern crate indexed_bitvec_core;
 
+pub mod parallelism_generic;
+
 pub use indexed_bitvec_core::ones_or_zeros;
 pub use indexed_bitvec_core::{OneBits, ZeroBits};
-pub use indexed_bitvec_core::Bits;
+pub use indexed_bitvec_core::{Bits, Word};
 
 mod indexed_bits;
 pub use indexed_bits::IndexedBits;
