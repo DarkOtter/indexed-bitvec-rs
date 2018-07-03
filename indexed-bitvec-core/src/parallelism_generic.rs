@@ -26,14 +26,7 @@ pub trait ExecutionMethod {
         G: FnOnce() + Send;
 
     /// Run many large computations which are independent.
-    fn do_many_large<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync;
-
-    /// Run many small computations which are independent.
-    fn do_many_small<T, I, F>(iter: I, f: F)
+    fn do_many_large_tasks<T, I, F>(iter: I, f: F)
     where
         I: IntoIterator<Item = T> + Send,
         T: Send,
@@ -55,21 +48,9 @@ impl ExecutionMethod for Sequential {
     }
 
     #[inline(always)]
-    fn do_many_large<T, I, F>(iter: I, f: F)
+    fn do_many_large_tasks<T, I, F>(iter: I, f: F)
     where
         I: IntoIterator<Item = T>,
-        T: Send,
-        F: Fn(T) + Send + Sync,
-    {
-        for x in iter {
-            f(x);
-        }
-    }
-
-    #[inline(always)]
-    fn do_many_small<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
         T: Send,
         F: Fn(T) + Send + Sync,
     {

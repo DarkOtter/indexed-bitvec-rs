@@ -101,23 +101,13 @@ fn build_sequential(c: &mut Criterion) {
     });
 }
 
-fn build_part_parallel(c: &mut Criterion) {
+fn build_parallel(c: &mut Criterion) {
     let mut rng = rng();
     let data = random_data_1gb(&mut rng);
     let data = data.decompose();
     c.bench_function("build_part_parallel", move |b| {
         let data = data.clone_ref();
-        b.iter(|| IndexedBits::build_index_partially_parallel(data))
-    });
-}
-
-fn build_full_parallel(c: &mut Criterion) {
-    let mut rng = rng();
-    let data = random_data_1gb(&mut rng);
-    let data = data.decompose();
-    c.bench_function("build_full_parallel", move |b| {
-        let data = data.clone_ref();
-        b.iter(|| IndexedBits::build_index_fully_parallel(data))
+        b.iter(|| IndexedBits::build_index_in_parallel(data))
     });
 }
 
@@ -127,7 +117,6 @@ criterion_group!(
     rank_times_1000,
     select_times_1000,
     build_sequential,
-    build_part_parallel,
-    build_full_parallel
+    build_parallel
 );
 criterion_main!(benches);

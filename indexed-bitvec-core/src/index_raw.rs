@@ -355,8 +355,8 @@ pub fn build_index_for<P: ExecutionMethod>(
         let l0_parts_to_build = bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
             .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
             .zip(l0_index.iter_mut());
-        P::do_many_large(l0_parts_to_build, |((bits_chunk, l1l2_chunk), l0_entry)| {
-            *l0_entry = build_inner_l1l2::<P>(l1l2_chunk, bits_chunk)
+        P::do_many_large_tasks(l0_parts_to_build, |((bits_chunk, l1l2_chunk), l0_entry)| {
+            *l0_entry = build_inner_l1l2(l1l2_chunk, bits_chunk)
         })
     }
     let l1l2_index = L1L2Indexes::it_is_the_whole_index_honest(l1l2_index);
@@ -381,19 +381,15 @@ pub fn build_index_for<P: ExecutionMethod>(
 }
 
 /// Build the inner l1l2 index and return the total count of set bits.
-fn build_inner_l1l2<P: ExecutionMethod>(
-    l1l2_index: &mut [L1L2Entry],
-    data_chunk: Bits<&[u8]>,
-) -> u64 {
+fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u64 {
     debug_assert!(data_chunk.used_bits() > 0);
     debug_assert!(data_chunk.used_bits() <= size::BITS_PER_L0_BLOCK);
     debug_assert!(l1l2_index.len() == size::l1l2(data_chunk.used_bits()));
 
-    {
-        let parts_to_count = data_chunk.chunks_by_bytes(size::BYTES_PER_L1_BLOCK).zip(
-            l1l2_index.iter_mut(),
-        );
-        P::do_many_small(parts_to_count, |(l1_chunk, write_to)| {
+    data_chunk
+        .chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
+        .zip(l1l2_index.iter_mut())
+        .for_each(|(l1_chunk, write_to)| {
             let mut counts = [0u16; 4];
             l1_chunk
                 .chunks_by_bytes(size::BYTES_PER_L2_BLOCK)
@@ -408,7 +404,6 @@ fn build_inner_l1l2<P: ExecutionMethod>(
 
             *write_to = L1L2Entry::pack(counts[3] as u32, [counts[0], counts[1], counts[2]]);
         });
-    }
 
     // Pass through reassigning each entry to hold its rank to finish.
     let mut running_total = 0u64;
@@ -471,7 +466,7 @@ fn build_samples<W: OnesOrZeros, P>(
         },
     );
 
-    P::do_many_large(chunks_with_samples, |(start_rank,
+    P::do_many_large_tasks(chunks_with_samples, |(start_rank,
       inner_l1l2_index,
       samples)| {
         build_samples_inner::<W, P>(

@@ -21,12 +21,10 @@
 pub use super::indexed_bitvec_core::parallelism_generic::*;
 use super::rayon::{join, scope};
 
-/// Supply to generic functions to execute with some efficient parallelism.
-pub enum PartiallyParallel {}
-/// Supply to generic functions to execute with maximum parallelism.
-pub enum FullyParallel {}
+/// Supply to generic functions to execute with some parallelism.
+pub enum Parallel {}
 
-impl ExecutionMethod for PartiallyParallel {
+impl ExecutionMethod for Parallel {
     #[inline(always)]
     fn do_both<F, G>(f: F, g: G)
     where
@@ -37,7 +35,7 @@ impl ExecutionMethod for PartiallyParallel {
     }
 
     #[inline(always)]
-    fn do_many_large<T, I, F>(iter: I, f: F)
+    fn do_many_large_tasks<T, I, F>(iter: I, f: F)
     where
         I: IntoIterator<Item = T> + Send,
         T: Send,
@@ -46,46 +44,5 @@ impl ExecutionMethod for PartiallyParallel {
         scope(|s| for x in iter {
             s.spawn(|_| f(x));
         });
-    }
-
-    #[inline(always)]
-    fn do_many_small<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync,
-    {
-        Sequential::do_many_small(iter, f);
-    }
-}
-
-impl ExecutionMethod for FullyParallel {
-    #[inline(always)]
-    fn do_both<F, G>(f: F, g: G)
-    where
-        F: FnOnce() + Send,
-        G: FnOnce() + Send,
-    {
-        PartiallyParallel::do_both(f, g);
-    }
-
-    #[inline(always)]
-    fn do_many_large<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync,
-    {
-        PartiallyParallel::do_many_large(iter, f);
-    }
-
-    #[inline(always)]
-    fn do_many_small<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync,
-    {
-        PartiallyParallel::do_many_large(iter, f);
     }
 }
