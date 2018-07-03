@@ -23,6 +23,7 @@
 use super::with_offset::WithOffset;
 use super::{ceil_div, ceil_div_u64};
 use super::Bits;
+use super::parallelism_generic::ExecutionMethod;
 use ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 use core::cmp::min;
 
@@ -335,7 +336,10 @@ pub fn check_index_size(index: &[u64], bits: Bits<&[u8]>) -> Result<(), IndexSiz
 }
 
 /// Build the index data for a given bitvector (*O(n)*).
-pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexSizeError> {
+pub fn build_index_for<P: ExecutionMethod>(
+    bits: Bits<&[u8]>,
+    into: &mut [u64],
+) -> Result<(), IndexSizeError> {
     check_index_size(into, bits)?;
 
     if bits.used_bits() == 0 {
@@ -347,13 +351,14 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexS
     let (l1l2_index, index_after_l1l2) = structure::split_l1l2_mut(index_after_l0, bits);
 
     // Build the L1L2 index, and get the L0 block bitcounts
-    bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
-        .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
-        .zip(l0_index.iter_mut())
-    // TODO: This loop could be parallelised
-        .for_each(|((bits_chunk, l1l2_chunk), l0_entry)| {
-            *l0_entry = build_inner_l1l2(l1l2_chunk, bits_chunk)
-        });
+    {
+        let l0_parts_to_build = bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
+            .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
+            .zip(l0_index.iter_mut());
+        P::do_many_large(l0_parts_to_build, |((bits_chunk, l1l2_chunk), l0_entry)| {
+            *l0_entry = build_inner_l1l2::<P>(l1l2_chunk, bits_chunk)
+        })
+    }
     let l1l2_index = L1L2Indexes::it_is_the_whole_index_honest(l1l2_index);
 
     // Convert the L0 block bitcounts into the proper L0 index
@@ -367,23 +372,28 @@ pub fn build_index_for(bits: Bits<&[u8]>, into: &mut [u64]) -> Result<(), IndexS
     // Build the select index
     let (samples_ones, samples_zeros) =
         structure::split_samples_mut(index_after_l1l2, bits, total_count_ones);
-    // TODO: These calls could be parallelised (divide-and-conquer)
-    build_samples::<OneBits>(l0_index, l1l2_index, bits, samples_ones);
-    build_samples::<ZeroBits>(l0_index, l1l2_index, bits, samples_zeros);
+    P::do_both(
+    || build_samples::<OneBits, P>(l0_index, l1l2_index, bits, samples_ones),
+    || build_samples::<ZeroBits, P>(l0_index, l1l2_index, bits, samples_zeros)
+        );
 
     Ok(())
 }
 
 /// Build the inner l1l2 index and return the total count of set bits.
-fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u64 {
+fn build_inner_l1l2<P: ExecutionMethod>(
+    l1l2_index: &mut [L1L2Entry],
+    data_chunk: Bits<&[u8]>,
+) -> u64 {
     debug_assert!(data_chunk.used_bits() > 0);
     debug_assert!(data_chunk.used_bits() <= size::BITS_PER_L0_BLOCK);
     debug_assert!(l1l2_index.len() == size::l1l2(data_chunk.used_bits()));
 
-    data_chunk.chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
-        .zip(l1l2_index.iter_mut())
-    // TODO: This loop could be parallelised
-        .for_each(|(l1_chunk, write_to)| {
+    {
+        let parts_to_count = data_chunk.chunks_by_bytes(size::BYTES_PER_L1_BLOCK).zip(
+            l1l2_index.iter_mut(),
+        );
+        P::do_many_small(parts_to_count, |(l1_chunk, write_to)| {
             let mut counts = [0u16; 4];
             l1_chunk
                 .chunks_by_bytes(size::BYTES_PER_L2_BLOCK)
@@ -398,6 +408,7 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
 
             *write_to = L1L2Entry::pack(counts[3] as u32, [counts[0], counts[1], counts[2]]);
         });
+    }
 
     // Pass through reassigning each entry to hold its rank to finish.
     let mut running_total = 0u64;
@@ -410,12 +421,14 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
     running_total
 }
 
-fn build_samples<W: OnesOrZeros>(
+fn build_samples<W: OnesOrZeros, P>(
     l0_index: &[u64],
     l1l2_index: L1L2Indexes,
     all_bits: Bits<&[u8]>,
     samples: &mut [SampleEntry],
-) {
+) where
+    P: ExecutionMethod,
+{
     let mut running_base_rank = 0u64;
     let mut running_total_bits = 0u64;
 
@@ -458,20 +471,28 @@ fn build_samples<W: OnesOrZeros>(
         },
     );
 
-    chunks_with_samples
-    // TODO: This loop could be parallelised
-        .for_each(|(start_rank, inner_l1l2_index, samples)| {
-            build_samples_inner::<W>(start_rank, inner_l1l2_index, 0, inner_l1l2_index.len(), samples)
-        })
+    P::do_many_large(chunks_with_samples, |(start_rank,
+      inner_l1l2_index,
+      samples)| {
+        build_samples_inner::<W, P>(
+            start_rank,
+            inner_l1l2_index,
+            0,
+            inner_l1l2_index.len(),
+            samples,
+        )
+    });
 }
 
-fn build_samples_inner<W: OnesOrZeros>(
+fn build_samples_inner<W: OnesOrZeros, P>(
     base_rank: u64,
     inner_l1l2_index: L1L2Index,
     low_block: usize,
     high_block: usize,
     mut samples: WithOffset<&mut [SampleEntry]>,
-) {
+) where
+    P: ExecutionMethod,
+{
     if samples.len() == 0 {
         return;
     } else if samples.len() == 1 {
@@ -496,20 +517,25 @@ fn build_samples_inner<W: OnesOrZeros>(
 
     let (before_mid, after_mid) = samples.split_at_mut_from_origin(samples_before_mid_block);
 
-    // TODO: These calls could be parallelised (divide-and-conquer)
-    build_samples_inner::<W>(
-        base_rank,
-        inner_l1l2_index,
-        low_block,
-        mid_block,
-        before_mid,
-    );
-    build_samples_inner::<W>(
-        base_rank,
-        inner_l1l2_index,
-        mid_block,
-        high_block,
-        after_mid,
+    P::do_both(
+        || {
+            build_samples_inner::<W, P>(
+                base_rank,
+                inner_l1l2_index,
+                low_block,
+                mid_block,
+                before_mid,
+            )
+        },
+        || {
+            build_samples_inner::<W, P>(
+                base_rank,
+                inner_l1l2_index,
+                mid_block,
+                high_block,
+                after_mid,
+            )
+        },
     );
 }
 
@@ -719,6 +745,7 @@ mod tests {
     use super::*;
     use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
+    use super::super::parallelism_generic::Sequential;
 
     #[test]
     fn small_indexed_tests() {
@@ -736,7 +763,7 @@ mod tests {
         let data = data.clone_ref();
         let index = {
             let mut index = vec![0u64; index_size_for(data)];
-            build_index_for(data, &mut index).unwrap();
+            build_index_for::<Sequential>(data, &mut index).unwrap();
             index
         };
 

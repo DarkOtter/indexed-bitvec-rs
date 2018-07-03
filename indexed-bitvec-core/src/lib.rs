@@ -65,6 +65,8 @@ pub mod ones_or_zeros;
 pub use ones_or_zeros::{OneBits, ZeroBits};
 
 mod word;
+pub use word::Word;
+
 mod bytes;
 
 mod bits;
@@ -72,6 +74,7 @@ pub use bits::Bits;
 
 mod with_offset;
 
+pub mod parallelism_generic;
 pub mod index_raw;
 
 #[cfg(test)]

@@ -26,20 +26,27 @@ pub struct IndexedBits<T: Deref<Target = [u8]>> {
 }
 
 impl<T: Deref<Target = [u8]>> IndexedBits<T> {
+    fn build_index_generic<P>(bits: Bits<T>) -> Self
+    where
+        P: parallelism_generic::ExecutionMethod,
+    {
+        let index = {
+            let bits_as_u8 = bits.clone_ref();
+            let index = vec![0u64; index_raw::index_size_for(bits_as_u8)];
+            let mut index = index.into_boxed_slice();
+            index_raw::build_index_for::<P>(bits_as_u8, index.deref_mut())
+                .expect("Specifically made index of the right size");
+            index
+        };
+        IndexedBits { index, bits }
+    }
+
     /// Build the index for a sequence of bits.
     ///
     /// This is an expensive operation which will examine
     /// all of the data input.
     pub fn build_index(bits: Bits<T>) -> Self {
-        let index = {
-            let bits_as_u8 = bits.clone_ref();
-            let index = vec![0u64; index_raw::index_size_for(bits_as_u8)];
-            let mut index = index.into_boxed_slice();
-            index_raw::build_index_for(bits_as_u8, index.deref_mut())
-                .expect("Specifically made index of the right size");
-            index
-        };
-        IndexedBits { index, bits }
+        Self::build_index_generic::<parallelism_generic::Sequential>(bits)
     }
 
     fn index(&self) -> &[u64] {
