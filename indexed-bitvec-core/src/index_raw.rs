@@ -109,13 +109,11 @@ mod structure {
     pub struct L1L2Entry(u64);
 
     impl L1L2Entry {
-        pub fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
-            debug_assert!(0x0400 > size::BITS_PER_L2_BLOCK);
-            debug_assert!(0x0400 > size::BITS_PER_L2_BLOCK * 3);
-            debug_assert!(sub_ranks.iter().all(|&x| x < 0x0400));
+        pub fn pack(base_rank: u32, first_counts: [u16; 3]) -> Self {
+            debug_assert!(first_counts.iter().all(|&x| x < 0x0400));
             L1L2Entry(
-                ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
-                    ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
+                ((base_rank as u64) << 32) | ((first_counts[0] as u64) << 22) |
+                    ((first_counts[1] as u64) << 12) | ((first_counts[2] as u64) << 2),
             )
         }
 
@@ -131,7 +129,7 @@ mod structure {
             *self = self.fset_base_rank(base_rank);
         }
 
-        pub fn sub_rank(self, i: usize) -> u64 {
+        pub fn l2_count(self, i: usize) -> u64 {
             let shift = 22 - i * 10;
             (self.0 >> shift) & 0x3ff
         }
@@ -297,11 +295,20 @@ mod structure {
             let l2_idx = block_idx % size::L2_BLOCKS_PER_L1_BLOCK;
             let entry = self.index_data[l1_idx];
             let l1_rank_ones = entry.base_rank();
-            let l2_rank_ones = if l2_idx > 0 {
-                entry.sub_rank(l2_idx - 1)
-            } else {
-                0
+            let l2_rank_ones = {
+                let mut l2_rank = 0;
+                if l2_idx >= 3 {
+                    l2_rank += entry.l2_count(2)
+                }
+                if l2_idx >= 2 {
+                    l2_rank += entry.l2_count(1)
+                }
+                if l2_idx >= 1 {
+                    l2_rank += entry.l2_count(0)
+                }
+                l2_rank
             };
+
             W::convert_count(
                 l1_rank_ones + l2_rank_ones,
                 block_idx as u64 * size::BITS_PER_L2_BLOCK,
@@ -384,19 +391,20 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
         .chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
         .zip(l1l2_index.iter_mut())
         .for_each(|(l1_chunk, write_to)| {
-            let mut counts = [0u16; 4];
-            l1_chunk
-                .chunks_by_bytes(size::BYTES_PER_L2_BLOCK)
-                .zip(counts.iter_mut())
-                .for_each(|(chunk, write_to)| {
-                    *write_to = chunk.count::<OneBits>() as u16
-                });
+            let mut counts = [0u16; 3];
+            let mut chunks = l1_chunk.chunks_by_bytes(size::BYTES_PER_L2_BLOCK);
+            let count_or_zero =
+                |opt: Option<Bits<&[u8]>>| opt.map_or(0, |chunk| chunk.count::<OneBits>() as u16);
 
-            counts[1] += counts[0];
-            counts[2] += counts[1];
-            counts[3] += counts[2];
+            counts[0] = count_or_zero(chunks.next());
+            counts[1] = count_or_zero(chunks.next());
+            counts[2] = count_or_zero(chunks.next());
+            let mut total = count_or_zero(chunks.next());
+            total += counts[0];
+            total += counts[1];
+            total += counts[2];
 
-            *write_to = L1L2Entry::pack(counts[3] as u32, [counts[0], counts[1], counts[2]]);
+            *write_to = L1L2Entry::pack(total as u32, counts);
         });
 
     // Pass through reassigning each entry to hold its rank to finish.
