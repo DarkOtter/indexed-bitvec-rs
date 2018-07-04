@@ -110,7 +110,9 @@ mod structure {
 
     impl L1L2Entry {
         pub fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
-            debug_assert!(sub_ranks.iter().all(|&x| (x & !0x03FF) == 0));
+            debug_assert!(0x0400 > size::BITS_PER_L2_BLOCK);
+            debug_assert!(0x0400 > size::BITS_PER_L2_BLOCK * 3);
+            debug_assert!(sub_ranks.iter().all(|&x| x < 0x0400));
             L1L2Entry(
                 ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
                     ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
@@ -720,6 +722,19 @@ mod tests {
     use super::*;
     use std::vec::Vec;
     use ones_or_zeros::{OneBits, ZeroBits};
+
+    #[test]
+    fn select_bug_issue_15() {
+        // When the bit we are selecting is in the same block as the next index sample
+        let mut data = vec![0xffu8; 8192 / 8 * 2];
+        data[8192 / 8 - 1] = 0;
+        let data = Bits::from(data, 8192 * 2).unwrap();
+        let data = data.clone_ref();
+        let mut index = vec![0u64; index_size_for(data)];
+        build_index_for(data, &mut index);
+        let index = index;
+        assert_eq!(select::<OneBits>(&index, data, 8191), Some(8199));
+    }
 
     #[test]
     fn small_indexed_tests() {
