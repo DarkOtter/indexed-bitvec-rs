@@ -1,4 +1,4 @@
-# Indexed BitVec
+# Indexed BitVec [![Build Status](https://travis-ci.org/DarkOtter/indexed-bitvec-rs.svg?branch=master)](https://travis-ci.org/DarkOtter/indexed-bitvec-rs)
 
 This library provides an indexing system for bitvectors which should hopefully
 allow fast rank and select operations. The library has not yet been completed,
