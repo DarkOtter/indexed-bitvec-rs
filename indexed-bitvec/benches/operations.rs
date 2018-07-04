@@ -24,11 +24,29 @@ use indexed_bitvec::*;
 use rand::{Rng, SeedableRng, XorShiftRng};
 
 fn rng() -> XorShiftRng {
-    let seed = [42, 3497651, 341723721, 1829743298];
+    let seed = [
+        42,
+        81,
+        133,
+        183,
+        231,
+        9,
+        13,
+        87,
+        13,
+        142,
+        13,
+        98,
+        182,
+        176,
+        41,
+        71,
+    ];
     XorShiftRng::from_seed(seed)
 }
 
 fn random_data(rng: &mut XorShiftRng, n_bits: u64) -> IndexedBits<Vec<u8>> {
+    use rand::RngCore;
     let n_bytes: usize = (n_bits / 8) as usize + 1;
     let data = {
         let mut data = vec![0u8; n_bytes];
