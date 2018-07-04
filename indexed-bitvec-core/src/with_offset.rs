@@ -31,6 +31,11 @@ impl<T> WithOffset<T> {
     pub fn offset_from_origin(&self) -> usize {
         self.offset
     }
+
+    /// Get back the data without the offset.
+    pub fn decompose(self) -> T {
+        self.data
+    }
 }
 
 impl<'a, T> WithOffset<&'a mut [T]> {
@@ -52,17 +57,6 @@ impl<'a, T> WithOffset<&'a mut [T]> {
                 data: data_r,
             },
         )
-    }
-
-    /// Take the first part of the data remaining.
-    pub fn take_upto_offset_from_origin(opt_ref: &mut Option<Self>, idx: usize) -> Option<Self> {
-        let whole_thing = match opt_ref.take() {
-            None => return None,
-            Some(x) => x,
-        };
-        let (first_part, second_part) = whole_thing.split_at_mut_from_origin(idx);
-        *opt_ref = Some(second_part);
-        Some(first_part)
     }
 }
 

@@ -110,11 +110,11 @@ mod structure {
     pub struct L1L2Entry(u64);
 
     impl L1L2Entry {
-        pub fn pack(base_rank: u32, sub_ranks: [u16; 3]) -> Self {
-            debug_assert!(sub_ranks.iter().all(|&x| (x & !0x03FF) == 0));
+        pub fn pack(base_rank: u32, first_counts: [u16; 3]) -> Self {
+            debug_assert!(first_counts.iter().all(|&x| x < 0x0400));
             L1L2Entry(
-                ((base_rank as u64) << 32) | ((sub_ranks[0] as u64) << 22) |
-                    ((sub_ranks[1] as u64) << 12) | ((sub_ranks[2] as u64) << 2),
+                ((base_rank as u64) << 32) | ((first_counts[0] as u64) << 22) |
+                    ((first_counts[1] as u64) << 12) | ((first_counts[2] as u64) << 2),
             )
         }
 
@@ -130,7 +130,7 @@ mod structure {
             *self = self.fset_base_rank(base_rank);
         }
 
-        pub fn sub_rank(self, i: usize) -> u64 {
+        pub fn l2_count(self, i: usize) -> u64 {
             let shift = 22 - i * 10;
             (self.0 >> shift) & 0x3ff
         }
@@ -296,11 +296,20 @@ mod structure {
             let l2_idx = block_idx % size::L2_BLOCKS_PER_L1_BLOCK;
             let entry = self.index_data[l1_idx];
             let l1_rank_ones = entry.base_rank();
-            let l2_rank_ones = if l2_idx > 0 {
-                entry.sub_rank(l2_idx - 1)
-            } else {
-                0
+            let l2_rank_ones = {
+                let mut l2_rank = 0;
+                if l2_idx >= 3 {
+                    l2_rank += entry.l2_count(2)
+                }
+                if l2_idx >= 2 {
+                    l2_rank += entry.l2_count(1)
+                }
+                if l2_idx >= 1 {
+                    l2_rank += entry.l2_count(0)
+                }
+                l2_rank
             };
+
             W::convert_count(
                 l1_rank_ones + l2_rank_ones,
                 block_idx as u64 * size::BITS_PER_L2_BLOCK,
@@ -390,19 +399,20 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
         .chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
         .zip(l1l2_index.iter_mut())
         .for_each(|(l1_chunk, write_to)| {
-            let mut counts = [0u16; 4];
-            l1_chunk
-                .chunks_by_bytes(size::BYTES_PER_L2_BLOCK)
-                .zip(counts.iter_mut())
-                .for_each(|(chunk, write_to)| {
-                    *write_to = chunk.count::<OneBits>() as u16
-                });
+            let mut counts = [0u16; 3];
+            let mut chunks = l1_chunk.chunks_by_bytes(size::BYTES_PER_L2_BLOCK);
+            let count_or_zero =
+                |opt: Option<Bits<&[u8]>>| opt.map_or(0, |chunk| chunk.count::<OneBits>() as u16);
 
-            counts[1] += counts[0];
-            counts[2] += counts[1];
-            counts[3] += counts[2];
+            counts[0] = count_or_zero(chunks.next());
+            counts[1] = count_or_zero(chunks.next());
+            counts[2] = count_or_zero(chunks.next());
+            let mut total = count_or_zero(chunks.next());
+            total += counts[0];
+            total += counts[1];
+            total += counts[2];
 
-            *write_to = L1L2Entry::pack(counts[3] as u32, [counts[0], counts[1], counts[2]]);
+            *write_to = L1L2Entry::pack(total as u32, counts);
         });
 
     // Pass through reassigning each entry to hold its rank to finish.
@@ -424,59 +434,72 @@ fn build_samples<W: OnesOrZeros, P>(
 ) where
     P: ExecutionMethod,
 {
-    let mut running_base_rank = 0u64;
-    let mut running_total_bits = 0u64;
+    build_samples_outer::<W, P>(
+        l0_index,
+        0,
+        l0_index.len(),
+        l1l2_index,
+        all_bits,
+        WithOffset::at_origin(samples),
+    )
+}
 
-    let l0_chunks_start_end_rank = {
-        l0_index.iter().map(|cumulative_count| {
-            let base_rank = running_base_rank.clone();
-            running_total_bits = min(
-                all_bits.used_bits(),
-                running_total_bits + size::BITS_PER_L0_BLOCK,
-            );
-            let cumulative_count = W::convert_count(cumulative_count.clone(), running_total_bits);
-            running_base_rank = cumulative_count;
-            (base_rank, cumulative_count)
-        })
-    };
-
-    let chunks_with_samples = l0_chunks_start_end_rank.enumerate().scan(
-        Some(
-            WithOffset::at_origin(
-                samples,
-            ),
-        ),
-        |samples,
-         (l0_idx,
-          (rank_start,
-           rank_end))| {
-            let n_samples_seen_end = size::samples_for_bits(rank_end);
-            let here_samples =
-                WithOffset::take_upto_offset_from_origin(samples, n_samples_seen_end)
-                    .expect("Should never run out of samples");
-            if here_samples.len() == 0 {
-                None
-            } else {
-                debug_assert!(
-                    here_samples.len() == n_samples_seen_end - size::samples_for_bits(rank_start)
-                );
-                let inner_l1l2_index = l1l2_index.inner_index(all_bits, l0_idx);
-                Some((rank_start, inner_l1l2_index, here_samples))
-            }
-        },
-    );
-
-    P::do_many_large_tasks(chunks_with_samples, |(start_rank,
-      inner_l1l2_index,
-      samples)| {
-        build_samples_inner::<W, P>(
-            start_rank,
+fn build_samples_outer<W: OnesOrZeros, P>(
+    l0_index: &[u64],
+    low_l0_block: usize,
+    high_l0_block: usize,
+    l1l2_index: L1L2Indexes,
+    all_bits: Bits<&[u8]>,
+    samples: WithOffset<&mut [SampleEntry]>,
+) where
+    P: ExecutionMethod,
+{
+    if low_l0_block >= high_l0_block || samples.len() == 0 {
+        return;
+    } else if low_l0_block + 1 >= high_l0_block {
+        let l0_idx = low_l0_block;
+        let base_rank = read_l0_rank::<W>(l0_index, all_bits, l0_idx);
+        let inner_l1l2_index = l1l2_index.inner_index(all_bits, l0_idx);
+        return build_samples_inner::<W, P>(
+            base_rank,
             inner_l1l2_index,
             0,
             inner_l1l2_index.len(),
             samples,
-        )
-    });
+        );
+    }
+
+    debug_assert!(low_l0_block + 1 < high_l0_block);
+    let mid_l0_block = (low_l0_block + high_l0_block) / 2;
+    debug_assert!(mid_l0_block > low_l0_block);
+    debug_assert!(mid_l0_block < high_l0_block);
+
+    let samples_before_mid_l0_block =
+        size::samples_for_bits(read_l0_rank::<W>(l0_index, all_bits, mid_l0_block));
+    let (before_mid, after_mid) = samples.split_at_mut_from_origin(samples_before_mid_l0_block);
+
+    P::do_both(
+        || {
+            build_samples_outer::<W, P>(
+                l0_index,
+                low_l0_block,
+                mid_l0_block,
+                l1l2_index,
+                all_bits,
+                before_mid,
+            )
+        },
+        || {
+            build_samples_outer::<W, P>(
+                l0_index,
+                mid_l0_block,
+                high_l0_block,
+                l1l2_index,
+                all_bits,
+                after_mid,
+            )
+        },
+    );
 }
 
 fn build_samples_inner<W: OnesOrZeros, P>(
@@ -484,7 +507,7 @@ fn build_samples_inner<W: OnesOrZeros, P>(
     inner_l1l2_index: L1L2Index,
     low_block: usize,
     high_block: usize,
-    mut samples: WithOffset<&mut [SampleEntry]>,
+    samples: WithOffset<&mut [SampleEntry]>,
 ) where
     P: ExecutionMethod,
 {
@@ -498,15 +521,16 @@ fn build_samples_inner<W: OnesOrZeros, P>(
             inner_l1l2_index.rank_of_block::<W>(block_idx) > target_rank_in_l0
         });
         debug_assert!(following_block_idx > low_block);
-        samples[0] = SampleEntry::pack(following_block_idx - 1);
+        samples.decompose()[0] = SampleEntry::pack(following_block_idx - 1);
         return;
     }
 
     debug_assert!(samples.len() > 1);
-    debug_assert!(high_block > low_block + 1);
-
-    let mid_block = (low_block + high_block + 1) / 2;
+    debug_assert!(low_block + 1 < high_block);
+    let mid_block = (low_block + high_block) / 2;
+    debug_assert!(mid_block > low_block);
     debug_assert!(mid_block < high_block);
+
     let samples_before_mid_block =
         size::samples_for_bits(inner_l1l2_index.rank_of_block::<W>(mid_block) + base_rank);
 
@@ -709,7 +733,7 @@ pub fn select<W: OnesOrZeros>(
             // Sample does not exist
             inner_l1l2_index.len()
         } else {
-            select_samples[next_sample_idx as usize].block_idx_in_l0_block()
+            select_samples[next_sample_idx as usize].block_idx_in_l0_block() + 1
         }
     };
 
@@ -743,11 +767,41 @@ mod tests {
     use super::super::parallelism_generic::Sequential;
 
     #[test]
+    fn select_bug_issue_15() {
+        // When the bit we are selecting is in the same block as the next index sample
+        let mut data = vec![0xffu8; 8192 / 8 * 2];
+        data[8192 / 8 - 1] = 0;
+        let data = Bits::from(data, 8192 * 2).unwrap();
+        let data = data.clone_ref();
+        let mut index = vec![0u64; index_size_for(data)];
+        build_index_for::<Sequential>(data, &mut index);
+        let index = index;
+        assert_eq!(select::<OneBits>(&index, data, 8191), Some(8199));
+    }
+
+    #[test]
     fn small_indexed_tests() {
-        use rand::{Rng, SeedableRng, XorShiftRng};
+        use rand::{SeedableRng, XorShiftRng, RngCore, Rng};
         let n_bits: u64 = (1 << 19) - 1;
         let n_bytes: usize = ceil_div_u64(n_bits, 8) as usize;
-        let seed = [42, 349107693, 1723721493, 1356827498];
+        let seed = [
+            42,
+            73,
+            197,
+            231,
+            255,
+            43,
+            87,
+            05,
+            50,
+            13,
+            74,
+            107,
+            195,
+            231,
+            5,
+            1,
+        ];
         let mut rng = XorShiftRng::from_seed(seed);
         let data = {
             let mut data = vec![0u8; n_bytes];
