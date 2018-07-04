@@ -424,57 +424,64 @@ fn build_samples<W: OnesOrZeros>(
     all_bits: Bits<&[u8]>,
     samples: &mut [SampleEntry],
 ) {
-    let mut running_base_rank = 0u64;
-    let mut running_total_bits = 0u64;
+    build_samples_outer::<W>(
+        l0_index,
+        0,
+        l0_index.len(),
+        l1l2_index,
+        all_bits,
+        WithOffset::at_origin(samples),
+    )
+}
 
-    let l0_chunks_start_end_rank = {
-        l0_index.iter().map(|cumulative_count| {
-            let base_rank = running_base_rank.clone();
-            running_total_bits = min(
-                all_bits.used_bits(),
-                running_total_bits + size::BITS_PER_L0_BLOCK,
-            );
-            let cumulative_count = W::convert_count(cumulative_count.clone(), running_total_bits);
-            running_base_rank = cumulative_count;
-            (base_rank, cumulative_count)
-        })
-    };
-
-    let chunks_with_samples = l0_chunks_start_end_rank.enumerate().scan(
-        Some(
-            WithOffset::at_origin(
-                samples,
-            ),
-        ),
-        |samples,
-         (l0_idx,
-          (rank_start,
-           rank_end))| {
-            let n_samples_seen_end = size::samples_for_bits(rank_end);
-            let here_samples =
-                WithOffset::take_upto_offset_from_origin(samples, n_samples_seen_end)
-                    .expect("Should never run out of samples");
-            if here_samples.len() == 0 {
-                None
-            } else {
-                debug_assert!(
-                    here_samples.len() == n_samples_seen_end - size::samples_for_bits(rank_start)
-                );
-                let inner_l1l2_index = l1l2_index.inner_index(all_bits, l0_idx);
-                Some((rank_start, inner_l1l2_index, here_samples))
-            }
-        },
-    );
-
-    chunks_with_samples.for_each(|(start_rank, inner_l1l2_index, samples)| {
-        build_samples_inner::<W>(
-            start_rank,
+fn build_samples_outer<W: OnesOrZeros>(
+    l0_index: &[u64],
+    low_l0_block: usize,
+    high_l0_block: usize,
+    l1l2_index: L1L2Indexes,
+    all_bits: Bits<&[u8]>,
+    samples: WithOffset<&mut [SampleEntry]>,
+) {
+    if low_l0_block >= high_l0_block || samples.len() == 0 {
+        return;
+    } else if low_l0_block + 1 >= high_l0_block {
+        let l0_idx = low_l0_block;
+        let base_rank = read_l0_rank::<W>(l0_index, all_bits, l0_idx);
+        let inner_l1l2_index = l1l2_index.inner_index(all_bits, l0_idx);
+        return build_samples_inner::<W>(
+            base_rank,
             inner_l1l2_index,
             0,
             inner_l1l2_index.len(),
             samples,
-        )
-    })
+        );
+    }
+
+    debug_assert!(low_l0_block + 1 < high_l0_block);
+    let mid_l0_block = (low_l0_block + high_l0_block) / 2;
+    debug_assert!(mid_l0_block > low_l0_block);
+    debug_assert!(mid_l0_block < high_l0_block);
+
+    let samples_before_mid_l0_block =
+        size::samples_for_bits(read_l0_rank::<W>(l0_index, all_bits, mid_l0_block));
+    let (before_mid, after_mid) = samples.split_at_mut_from_origin(samples_before_mid_l0_block);
+
+    build_samples_outer::<W>(
+        l0_index,
+        low_l0_block,
+        mid_l0_block,
+        l1l2_index,
+        all_bits,
+        before_mid,
+    );
+    build_samples_outer::<W>(
+        l0_index,
+        mid_l0_block,
+        high_l0_block,
+        l1l2_index,
+        all_bits,
+        after_mid,
+    );
 }
 
 fn build_samples_inner<W: OnesOrZeros>(
@@ -482,7 +489,7 @@ fn build_samples_inner<W: OnesOrZeros>(
     inner_l1l2_index: L1L2Index,
     low_block: usize,
     high_block: usize,
-    mut samples: WithOffset<&mut [SampleEntry]>,
+    samples: WithOffset<&mut [SampleEntry]>,
 ) {
     if samples.len() == 0 {
         return;
@@ -494,15 +501,16 @@ fn build_samples_inner<W: OnesOrZeros>(
             inner_l1l2_index.rank_of_block::<W>(block_idx) > target_rank_in_l0
         });
         debug_assert!(following_block_idx > low_block);
-        samples[0] = SampleEntry::pack(following_block_idx - 1);
+        samples.decompose()[0] = SampleEntry::pack(following_block_idx - 1);
         return;
     }
 
     debug_assert!(samples.len() > 1);
-    debug_assert!(high_block > low_block + 1);
-
-    let mid_block = (low_block + high_block + 1) / 2;
+    debug_assert!(low_block + 1 < high_block);
+    let mid_block = (low_block + high_block) / 2;
+    debug_assert!(mid_block > low_block);
     debug_assert!(mid_block < high_block);
+
     let samples_before_mid_block =
         size::samples_for_bits(inner_l1l2_index.rank_of_block::<W>(mid_block) + base_rank);
 
