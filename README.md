@@ -22,8 +22,8 @@ Timings were made:
 |-------------|--------|
 | build_index | ~200ms |
 | count       | ~2ns   |
-| rank        | ~45ns  |
-| select      | ~100ns |
+| rank        | ~55ns  |
+| select      | ~110ns |
 
 The use of target-cpu is likely to have a significant effect on the speed of
 the operations as it allows llvm & rust to use vectorisation & popcount
