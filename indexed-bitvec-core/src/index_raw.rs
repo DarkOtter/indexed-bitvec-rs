@@ -699,7 +699,7 @@ pub fn select<W: OnesOrZeros>(
             // Sample does not exist
             inner_l1l2_index.len()
         } else {
-            select_samples[next_sample_idx as usize].block_idx_in_l0_block()
+            select_samples[next_sample_idx as usize].block_idx_in_l0_block() + 1
         }
     };
 
