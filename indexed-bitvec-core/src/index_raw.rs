@@ -532,7 +532,7 @@ fn build_samples_inner<W: OnesOrZeros>(
     );
 }
 
-// Count the set bits using the index (fast *O(1)*).
+/// Count the set bits using the index (fast *O(1)*).
 pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     if bits.used_bits() == 0 {
         return 0;
@@ -542,7 +542,7 @@ pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     index[l0_size - 1]
 }
 
-// Count the unset bits using the index (fast *O(1)*).
+/// Count the unset bits using the index (fast *O(1)*).
 pub fn count_zeros(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     ZeroBits::convert_count(count_ones(index, bits), bits.used_bits())
 }

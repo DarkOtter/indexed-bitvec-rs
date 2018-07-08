@@ -61,8 +61,7 @@ pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
     nb / d
 }
 
-pub mod ones_or_zeros;
-pub use ones_or_zeros::{OneBits, ZeroBits};
+mod ones_or_zeros;
 
 mod word;
 pub use word::Word;

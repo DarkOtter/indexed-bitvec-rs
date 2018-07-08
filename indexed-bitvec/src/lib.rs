@@ -21,8 +21,6 @@
 
 extern crate indexed_bitvec_core;
 
-pub use indexed_bitvec_core::ones_or_zeros;
-pub use indexed_bitvec_core::{OneBits, ZeroBits};
 pub use indexed_bitvec_core::{Bits, Word};
 
 mod indexed_bits;
