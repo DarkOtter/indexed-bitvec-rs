@@ -747,7 +747,7 @@ mod tests {
         let data = Bits::from(data, 8192 * 2).unwrap();
         let data = data.clone_ref();
         let mut index = vec![0u64; index_size_for(data)];
-        build_index_for(data, &mut index);
+        build_index_for(data, &mut index).unwrap();
         let index = index;
         assert_eq!(select::<OneBits>(&index, data, 8191), Some(8199));
     }
