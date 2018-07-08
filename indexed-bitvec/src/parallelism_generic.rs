@@ -19,7 +19,7 @@
 //! This crate is still under heavy development,
 //! so it will not be very stable in its interface yet.
 pub use super::indexed_bitvec_core::parallelism_generic::*;
-use super::rayon::{join, scope};
+use super::rayon::join;
 
 /// Supply to generic functions to execute with some parallelism.
 pub enum Parallel {}
@@ -32,17 +32,5 @@ impl ExecutionMethod for Parallel {
         G: FnOnce() + Send,
     {
         join(f, g);
-    }
-
-    #[inline(always)]
-    fn do_many_large_tasks<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync,
-    {
-        scope(|s| for x in iter {
-            s.spawn(|_| f(x));
-        });
     }
 }

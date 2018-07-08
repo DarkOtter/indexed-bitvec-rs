@@ -360,14 +360,12 @@ pub fn build_index_for<P: ExecutionMethod>(
     let (l1l2_index, index_after_l1l2) = structure::split_l1l2_mut(index_after_l0, bits);
 
     // Build the L1L2 index, and get the L0 block bitcounts
-    {
-        let l0_parts_to_build = bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
-            .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
-            .zip(l0_index.iter_mut());
-        P::do_many_large_tasks(l0_parts_to_build, |((bits_chunk, l1l2_chunk), l0_entry)| {
+    bits.chunks_by_bytes(size::BYTES_PER_L0_BLOCK)
+        .zip(l1l2_index.chunks_mut(size::L1_BLOCKS_PER_L0_BLOCK))
+        .zip(l0_index.iter_mut())
+        .for_each(|((bits_chunk, l1l2_chunk), l0_entry)| {
             *l0_entry = build_inner_l1l2(l1l2_chunk, bits_chunk)
-        })
-    }
+        });
     let l1l2_index = L1L2Indexes::it_is_the_whole_index_honest(l1l2_index);
 
     // Convert the L0 block bitcounts into the proper L0 index

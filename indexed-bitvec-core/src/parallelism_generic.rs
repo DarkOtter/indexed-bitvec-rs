@@ -24,13 +24,6 @@ pub trait ExecutionMethod {
     where
         F: FnOnce() + Send,
         G: FnOnce() + Send;
-
-    /// Run many large computations which are independent.
-    fn do_many_large_tasks<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T> + Send,
-        T: Send,
-        F: Fn(T) + Send + Sync;
 }
 
 /// Supply to generic functions to execute sequentially (no parallelism).
@@ -45,17 +38,5 @@ impl ExecutionMethod for Sequential {
     {
         f();
         g();
-    }
-
-    #[inline(always)]
-    fn do_many_large_tasks<T, I, F>(iter: I, f: F)
-    where
-        I: IntoIterator<Item = T>,
-        T: Send,
-        F: Fn(T) + Send + Sync,
-    {
-        for x in iter {
-            f(x);
-        }
     }
 }
