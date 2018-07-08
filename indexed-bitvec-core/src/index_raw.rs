@@ -394,7 +394,7 @@ fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: Bits<&[u8]>) -> u6
             let mut counts = [0u16; 3];
             let mut chunks = l1_chunk.chunks_by_bytes(size::BYTES_PER_L2_BLOCK);
             let count_or_zero =
-                |opt: Option<Bits<&[u8]>>| opt.map_or(0, |chunk| chunk.count::<OneBits>() as u16);
+                |opt: Option<Bits<&[u8]>>| opt.map_or(0, |chunk| chunk.count_ones() as u16);
 
             counts[0] = count_or_zero(chunks.next());
             counts[1] = count_or_zero(chunks.next());
@@ -532,7 +532,8 @@ fn build_samples_inner<W: OnesOrZeros>(
     );
 }
 
-fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+// Count the set bits using the index (fast *O(1)*).
+pub fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     if bits.used_bits() == 0 {
         return 0;
     }
@@ -541,9 +542,9 @@ fn count_ones(index: &[u64], bits: Bits<&[u8]>) -> u64 {
     index[l0_size - 1]
 }
 
-/// Count the set/unset bits using the index (fast *O(1)*).
-pub fn count<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>) -> u64 {
-    W::convert_count(count_ones(index, bits), bits.used_bits())
+// Count the unset bits using the index (fast *O(1)*).
+pub fn count_zeros(index: &[u64], bits: Bits<&[u8]>) -> u64 {
+    ZeroBits::convert_count(count_ones(index, bits), bits.used_bits())
 }
 
 fn read_l0_cumulative_count<W: OnesOrZeros>(
@@ -568,7 +569,10 @@ fn read_l0_rank<W: OnesOrZeros>(l0_index: &[u64], bits: Bits<&[u8]>, idx: usize)
     }
 }
 
-fn rank_ones(index: &[u64], all_bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+/// Count the set bits before a position in the bits using the index (*O(1)*).
+///
+/// Returns `None` it the index is out of bounds.
+pub fn rank_ones(index: &[u64], all_bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
     if idx >= all_bits.used_bits() {
         return None;
     } else if idx == 0 {
@@ -596,18 +600,18 @@ fn rank_ones(index: &[u64], all_bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
 
     let scan_skip_bytes = l0_idx * size::BYTES_PER_L0_BLOCK + block_idx * size::BYTES_PER_L2_BLOCK;
     let scan_bits = all_bits.drop_bytes(scan_skip_bytes);
-    let scanned_rank = scan_bits.rank::<OneBits>(block_offset).expect(
+    let scanned_rank = scan_bits.rank_ones(block_offset).expect(
         "Already checked size",
     );
     Some(l0_rank + block_rank + scanned_rank)
 }
 
 
-/// Count the set/unset bits before a position in the bits using the index (*O(1)*).
+/// Count the unset bits before a position in the bits using the index (*O(1)*).
 ///
 /// Returns `None` it the index is out of bounds.
-pub fn rank<W: OnesOrZeros>(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
-    rank_ones(index, bits, idx).map(|res_ones| W::convert_count(res_ones, idx))
+pub fn rank_zeros(index: &[u64], bits: Bits<&[u8]>, idx: u64) -> Option<u64> {
+    rank_ones(index, bits, idx).map(|res_ones| ZeroBits::convert_count(res_ones, idx))
 }
 
 /// Find the index *i* which partitions the input space into values
@@ -642,16 +646,7 @@ where
     return false_up_to;
 }
 
-/// Find the position of a bit by its rank using the index (*O(log n)*).
-///
-/// Returns `None` if no suitable bit is found. It is
-/// always the case otherwise that `rank::<W>(result) == target_rank`
-/// and `get(result) == Some(W::is_ones())`.
-pub fn select<W: OnesOrZeros>(
-    index: &[u64],
-    all_bits: Bits<&[u8]>,
-    target_rank: u64,
-) -> Option<u64> {
+fn select<W: OnesOrZeros>(index: &[u64], all_bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
     if all_bits.used_bits() == 0 {
         return None;
     }
@@ -733,11 +728,28 @@ pub fn select<W: OnesOrZeros>(
     Some(scan_skip_bytes as u64 * 8 + scanned_idx)
 }
 
+/// Find the position of a set bit by its rank using the index (*O(log n)*).
+///
+/// Returns `None` if no suitable bit is found. It is
+/// always the case otherwise that `rank_ones(index, result) == Some(target_rank)`
+/// and `get(result) == Some(true)`.
+pub fn select_ones(index: &[u64], all_bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
+    select::<OneBits>(index, all_bits, target_rank)
+}
+
+/// Find the position of an unset bit by its rank using the index (*O(log n)*).
+///
+/// Returns `None` if no suitable bit is found. It is
+/// always the case otherwise that `rank_zeros(index, result) == Some(target_rank)`
+/// and `get(result) == Some(false)`.
+pub fn select_zeros(index: &[u64], all_bits: Bits<&[u8]>, target_rank: u64) -> Option<u64> {
+    select::<ZeroBits>(index, all_bits, target_rank)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::vec::Vec;
-    use ones_or_zeros::{OneBits, ZeroBits};
 
     #[test]
     fn select_bug_issue_15() {
@@ -749,7 +761,7 @@ mod tests {
         let mut index = vec![0u64; index_size_for(data)];
         build_index_for(data, &mut index).unwrap();
         let index = index;
-        assert_eq!(select::<OneBits>(&index, data, 8191), Some(8199));
+        assert_eq!(select_ones(&index, data, 8191), Some(8199));
     }
 
     #[test]
@@ -789,13 +801,13 @@ mod tests {
             index
         };
 
-        let count_ones = data.count::<OneBits>();
-        let count_zeros = n_bits - count_ones;
-        assert_eq!(count_ones, count::<OneBits>(&index, data));
-        assert_eq!(count_zeros, count::<ZeroBits>(&index, data));
+        let expected_count_ones = data.count_ones();
+        let expected_count_zeros = n_bits - expected_count_ones;
+        assert_eq!(expected_count_ones, count_ones(&index, data));
+        assert_eq!(expected_count_zeros, count_zeros(&index, data));
 
-        assert_eq!(None, rank::<OneBits>(&index, data, n_bits));
-        assert_eq!(None, rank::<ZeroBits>(&index, data, n_bits));
+        assert_eq!(None, rank_ones(&index, data, n_bits));
+        assert_eq!(None, rank_zeros(&index, data, n_bits));
 
         let rank_idxs = {
             let mut idxs: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, n_bits)).collect();
@@ -803,40 +815,32 @@ mod tests {
             idxs
         };
         for idx in rank_idxs {
-            assert_eq!(
-                data.rank::<OneBits>(idx),
-                rank::<OneBits>(&index, data, idx)
-            );
-            assert_eq!(
-                data.rank::<ZeroBits>(idx),
-                rank::<ZeroBits>(&index, data, idx)
-            );
+            assert_eq!(data.rank_ones(idx), rank_ones(&index, data, idx));
+            assert_eq!(data.rank_zeros(idx), rank_zeros(&index, data, idx));
         }
 
-        assert_eq!(None, select::<OneBits>(&index, data, count_ones));
+        assert_eq!(None, select_ones(&index, data, expected_count_ones));
         let one_ranks = {
-            let mut ranks: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, count_ones)).collect();
+            let mut ranks: Vec<u64> = (0..1000)
+                .map(|_| rng.gen_range(0, expected_count_ones))
+                .collect();
             ranks.sort();
             ranks
         };
         for rank in one_ranks {
-            assert_eq!(
-                data.select::<OneBits>(rank),
-                select::<OneBits>(&index, data, rank)
-            );
+            assert_eq!(data.select_ones(rank), select_ones(&index, data, rank));
         }
 
-        assert_eq!(None, select::<ZeroBits>(&index, data, count_zeros));
+        assert_eq!(None, select_zeros(&index, data, expected_count_zeros));
         let zero_ranks = {
-            let mut ranks: Vec<u64> = (0..1000).map(|_| rng.gen_range(0, count_zeros)).collect();
+            let mut ranks: Vec<u64> = (0..1000)
+                .map(|_| rng.gen_range(0, expected_count_zeros))
+                .collect();
             ranks.sort();
             ranks
         };
         for rank in zero_ranks {
-            assert_eq!(
-                data.select::<ZeroBits>(rank),
-                select::<ZeroBits>(&index, data, rank)
-            );
+            assert_eq!(data.select_zeros(rank), select_zeros(&index, data, rank));
         }
     }
 }

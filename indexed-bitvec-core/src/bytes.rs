@@ -87,10 +87,6 @@ pub fn count_ones(data: &[u8]) -> u64 {
     }
 }
 
-pub fn count<W: OnesOrZeros>(data: &[u8]) -> u64 {
-    W::convert_count(count_ones(data), data.len() as u64 * 8)
-}
-
 pub fn rank_ones(data: &[u8], idx_bits: u64) -> Option<u64> {
     let full_bytes = idx_bits / 8;
     if full_bytes >= data.len() as u64 {
@@ -102,10 +98,6 @@ pub fn rank_ones(data: &[u8], idx_bits: u64) -> Option<u64> {
     let full_bytes_count = count_ones(&data[..full_bytes]);
     let rem_count = (!((!0u8) >> rem) & data[full_bytes]).count_ones();
     Some(full_bytes_count + rem_count as u64)
-}
-
-pub fn rank<W: OnesOrZeros>(data: &[u8], idx_bits: u64) -> Option<u64> {
-    rank_ones(data, idx_bits).map(|count_ones| W::convert_count(count_ones, idx_bits))
 }
 
 /// Select a bit by rank within bytes one byte at a time, or return the total count.
@@ -202,16 +194,19 @@ mod tests {
 
     quickcheck! {
         fn test_count(data: Vec<u8>) -> bool {
-            let mut count_ones = 0u64;
-            let mut count_zeros = 0u64;
+            let mut expected_count_ones = 0u64;
+            let mut expected_count_zeros = 0u64;
 
             for byte in data.iter().cloned() {
-                count_ones += byte.count_ones() as u64;
-                count_zeros += byte.count_zeros() as u64;
+                expected_count_ones += byte.count_ones() as u64;
+                expected_count_zeros += byte.count_zeros() as u64;
             }
 
-            count::<OneBits>(&data) == count_ones
-                && count::<ZeroBits>(&data) == count_zeros
+            let count_ones = count_ones(&data);
+            let count_zeros = ZeroBits::convert_count(count_ones, data.len() as u64 * 8);
+
+            count_ones == expected_count_ones
+                && count_zeros == expected_count_zeros
         }
     }
 
@@ -234,38 +229,36 @@ mod tests {
     fn test_rank() {
         let data = random_data();
 
-        let mut rank_ones = 0u64;
-        let mut rank_zeros = 0u64;
+        let mut expected_rank_ones = 0u64;
+        let mut expected_rank_zeros = 0u64;
 
         for (byte_idx, byte) in data.iter().cloned().enumerate() {
             let byte_idx = byte_idx as u64;
             let bits = bits_of_byte(byte);
             for (bit_idx, bit) in bits.iter().cloned().enumerate() {
                 let bit_idx = bit_idx as u64;
-                assert_eq!(
-                    Some(rank_ones),
-                    rank::<OneBits>(&data, byte_idx * 8 + bit_idx)
-                );
-                assert_eq!(
-                    Some(rank_zeros),
-                    rank::<ZeroBits>(&data, byte_idx * 8 + bit_idx)
-                );
+                let rank_ones = rank_ones(&data, byte_idx * 8 + bit_idx);
+                assert_eq!(Some(expected_rank_ones), rank_ones);
+                let rank_zeros =
+                    ZeroBits::convert_count(rank_ones.unwrap(), byte_idx * 8 + bit_idx);
+                assert_eq!(expected_rank_zeros, rank_zeros);
 
                 if bit {
-                    rank_ones += 1;
+                    expected_rank_ones += 1;
                 } else {
-                    rank_zeros += 1;
+                    expected_rank_zeros += 1;
                 }
             }
         }
     }
 
     fn do_test_select<W: OnesOrZeros>(data: &Vec<u8>) {
-        let total_count = count::<W>(&data) as usize;
+        let total_count = W::convert_count(count_ones(&data), data.len() as u64 * 8) as usize;
         for i in 0..total_count {
             let i = i as u64;
             let r = select::<W>(&data, i).expect("Already checked in-bounds");
-            assert_eq!(Some(i), rank::<W>(&data, r));
+            let rank = W::convert_count(rank_ones(&data, r).unwrap(), r);
+            assert_eq!(i, rank);
         }
         assert_eq!(None, select::<W>(&data, total_count as u64));
     }

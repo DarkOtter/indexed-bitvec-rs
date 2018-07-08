@@ -16,7 +16,7 @@
 //! Type to represent bits, and basic count/rank/select functions for it.
 use super::ceil_div_u64;
 use bytes;
-use ones_or_zeros::OnesOrZeros;
+use ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
 use core::cmp::min;
 use core::ops::Deref;
 
@@ -83,25 +83,38 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         }
     }
 
-    /// Count the set/unset bits (*O(n)*).
+    /// Count the set bits (*O(n)*).
     ///
     /// ```
     /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.count::<OneBits>(), 14);
-    /// assert_eq!(bits.count::<ZeroBits>(), 1);
-    /// assert_eq!(bits.count::<OneBits>() + bits.count::<ZeroBits>(), bits.used_bits());
+    /// assert_eq!(bits.count_ones(), 14);
+    /// assert_eq!(bits.count_zeros(), 1);
+    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
     /// ```
-    pub fn count<W: OnesOrZeros>(&self) -> u64 {
+    pub fn count_ones(&self) -> u64 {
         if (self.used_bits() % 8) != 0 {
-            bytes::rank::<W>(self.all_bytes(), self.used_bits())
+            bytes::rank_ones(self.all_bytes(), self.used_bits())
                 .expect("Internally called rank out-of-range")
         } else {
-            bytes::count::<W>(self.bytes())
+            bytes::count_ones(self.bytes())
         }
     }
 
-    /// Count the set/unset bits before a position in the bits (*O(n)*).
+    /// Count the unset bits (*O(n)*).
+    ///
+    /// ```
+    /// use indexed_bitvec_core::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.count_ones(), 14);
+    /// assert_eq!(bits.count_zeros(), 1);
+    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
+    /// ```
+    pub fn count_zeros(&self) -> u64 {
+        ZeroBits::convert_count(self.count_ones(), self.used_bits())
+    }
+
+    /// Count the set bits before a position in the bits (*O(n)*).
     ///
     /// Returns `None` it the index is out of bounds.
     ///
@@ -109,42 +122,53 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.used_bits()).all(|idx|
-    ///     bits.rank::<OneBits>(idx).unwrap()
-    ///     + bits.rank::<ZeroBits>(idx).unwrap()
+    ///     bits.rank_ones(idx).unwrap()
+    ///     + bits.rank_zeros(idx).unwrap()
     ///     == (idx as u64)));
-    /// assert_eq!(bits.rank::<OneBits>(7), Some(7));
-    /// assert_eq!(bits.rank::<ZeroBits>(7), Some(0));
-    /// assert_eq!(bits.rank::<OneBits>(8), Some(7));
-    /// assert_eq!(bits.rank::<ZeroBits>(8), Some(1));
-    /// assert_eq!(bits.rank::<OneBits>(9), Some(8));
-    /// assert_eq!(bits.rank::<ZeroBits>(9), Some(1));
-    /// assert_eq!(bits.rank::<OneBits>(15), None);
+    /// assert_eq!(bits.rank_ones(7), Some(7));
+    /// assert_eq!(bits.rank_zeros(7), Some(0));
+    /// assert_eq!(bits.rank_ones(8), Some(7));
+    /// assert_eq!(bits.rank_zeros(8), Some(1));
+    /// assert_eq!(bits.rank_ones(9), Some(8));
+    /// assert_eq!(bits.rank_zeros(9), Some(1));
+    /// assert_eq!(bits.rank_ones(15), None);
     /// ```
-    pub fn rank<W: OnesOrZeros>(&self, idx: u64) -> Option<u64> {
+    pub fn rank_ones(&self, idx: u64) -> Option<u64> {
         if idx >= self.used_bits() {
             None
         } else {
-            Some(bytes::rank::<W>(self.all_bytes(), idx).expect(
+            Some(bytes::rank_ones(self.all_bytes(), idx).expect(
                 "Internally called rank out-of-range",
             ))
         }
     }
 
-    /// Find the position of a bit by its rank (*O(n)*).
+    /// Count the unset bits before a position in the bits (*O(n)*).
     ///
-    /// Returns `None` if no suitable bit is found. It is
-    /// always the case otherwise that `rank::<W>(result) == target_rank`
-    /// and `get(result) == Some(W::is_ones())`.
+    /// Returns `None` it the index is out of bounds.
     ///
     /// ```
     /// use indexed_bitvec_core::*;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.select::<OneBits>(6), Some(6));
-    /// assert_eq!(bits.select::<OneBits>(7), Some(8));
-    /// assert_eq!(bits.select::<ZeroBits>(0), Some(7));
-    /// assert_eq!(bits.select::<ZeroBits>(1), None);
+    /// assert!((0..bits.used_bits()).all(|idx|
+    ///     bits.rank_ones(idx).unwrap()
+    ///     + bits.rank_zeros(idx).unwrap()
+    ///     == (idx as u64)));
+    /// assert_eq!(bits.rank_ones(7), Some(7));
+    /// assert_eq!(bits.rank_zeros(7), Some(0));
+    /// assert_eq!(bits.rank_ones(8), Some(7));
+    /// assert_eq!(bits.rank_zeros(8), Some(1));
+    /// assert_eq!(bits.rank_ones(9), Some(8));
+    /// assert_eq!(bits.rank_zeros(9), Some(1));
+    /// assert_eq!(bits.rank_ones(15), None);
     /// ```
-    pub fn select<W: OnesOrZeros>(&self, target_rank: u64) -> Option<u64> {
+    pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
+        self.rank_ones(idx).map(|rank_ones| {
+            ZeroBits::convert_count(rank_ones, idx)
+        })
+    }
+
+    pub(crate) fn select<W: OnesOrZeros>(&self, target_rank: u64) -> Option<u64> {
         let res = bytes::select::<W>(self.bytes(), target_rank);
         match res {
             None => None,
@@ -156,6 +180,42 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
                 }
             }
         }
+    }
+
+    /// Find the position of a set bit by its rank (*O(n)*).
+    ///
+    /// Returns `None` if no suitable bit is found. It is
+    /// always the case otherwise that `rank_ones(result) == Some(target_rank)`
+    /// and `get(result) == Some(true)`.
+    ///
+    /// ```
+    /// use indexed_bitvec_core::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.select_ones(6), Some(6));
+    /// assert_eq!(bits.select_ones(7), Some(8));
+    /// assert_eq!(bits.select_zeros(0), Some(7));
+    /// assert_eq!(bits.select_zeros(1), None);
+    /// ```
+    pub fn select_ones(&self, target_rank: u64) -> Option<u64> {
+        self.select::<OneBits>(target_rank)
+    }
+
+    /// Find the position of an unset bit by its rank (*O(n)*).
+    ///
+    /// Returns `None` if no suitable bit is found. It is
+    /// always the case otherwise that `rank_zeros(result) == Some(target_rank)`
+    /// and `get(result) == Some(false)`.
+    ///
+    /// ```
+    /// use indexed_bitvec_core::*;
+    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.select_ones(6), Some(6));
+    /// assert_eq!(bits.select_ones(7), Some(8));
+    /// assert_eq!(bits.select_zeros(0), Some(7));
+    /// assert_eq!(bits.select_zeros(1), None);
+    /// ```
+    pub fn select_zeros(&self, target_rank: u64) -> Option<u64> {
+        self.select::<ZeroBits>(target_rank)
     }
 
     /// Split the bits into a sequence of chunks of up to *n* bytes.
@@ -201,7 +261,6 @@ mod tests {
     use super::*;
     use std::boxed::Box;
     use std::vec::Vec;
-    use ones_or_zeros::{OneBits, ZeroBits};
     use quickcheck;
     use quickcheck::Arbitrary;
 
@@ -243,28 +302,28 @@ mod tests {
         let pattern_a = [0xff, 0xaau8];
         let bytes_a = &pattern_a[..];
         let make = |len: u64| Bits::from(bytes_a, len).expect("valid");
-        assert_eq!(12, make(16).count::<OneBits>());
-        assert_eq!(4, make(16).count::<ZeroBits>());
-        assert_eq!(12, make(15).count::<OneBits>());
-        assert_eq!(3, make(15).count::<ZeroBits>());
-        assert_eq!(11, make(14).count::<OneBits>());
-        assert_eq!(3, make(14).count::<ZeroBits>());
-        assert_eq!(11, make(13).count::<OneBits>());
-        assert_eq!(2, make(13).count::<ZeroBits>());
-        assert_eq!(10, make(12).count::<OneBits>());
-        assert_eq!(2, make(12).count::<ZeroBits>());
-        assert_eq!(10, make(11).count::<OneBits>());
-        assert_eq!(1, make(11).count::<ZeroBits>());
-        assert_eq!(9, make(10).count::<OneBits>());
-        assert_eq!(1, make(10).count::<ZeroBits>());
-        assert_eq!(9, make(9).count::<OneBits>());
-        assert_eq!(0, make(9).count::<ZeroBits>());
-        assert_eq!(8, make(8).count::<OneBits>());
-        assert_eq!(0, make(8).count::<ZeroBits>());
-        assert_eq!(7, make(7).count::<OneBits>());
-        assert_eq!(0, make(7).count::<ZeroBits>());
-        assert_eq!(0, make(0).count::<OneBits>());
-        assert_eq!(0, make(0).count::<ZeroBits>());
+        assert_eq!(12, make(16).count_ones());
+        assert_eq!(4, make(16).count_zeros());
+        assert_eq!(12, make(15).count_ones());
+        assert_eq!(3, make(15).count_zeros());
+        assert_eq!(11, make(14).count_ones());
+        assert_eq!(3, make(14).count_zeros());
+        assert_eq!(11, make(13).count_ones());
+        assert_eq!(2, make(13).count_zeros());
+        assert_eq!(10, make(12).count_ones());
+        assert_eq!(2, make(12).count_zeros());
+        assert_eq!(10, make(11).count_ones());
+        assert_eq!(1, make(11).count_zeros());
+        assert_eq!(9, make(10).count_ones());
+        assert_eq!(1, make(10).count_zeros());
+        assert_eq!(9, make(9).count_ones());
+        assert_eq!(0, make(9).count_zeros());
+        assert_eq!(8, make(8).count_ones());
+        assert_eq!(0, make(8).count_zeros());
+        assert_eq!(7, make(7).count_ones());
+        assert_eq!(0, make(7).count_zeros());
+        assert_eq!(0, make(0).count_ones());
+        assert_eq!(0, make(0).count_zeros());
     }
 
     #[test]
@@ -274,18 +333,15 @@ mod tests {
         let make = |len: u64| Bits::from(bytes_a, len).expect("valid");
         let bits_a = make(16);
         for i in 0..15 {
-            assert_eq!(Some(make(i).count::<OneBits>()), bits_a.rank::<OneBits>(i));
-            assert_eq!(
-                Some(make(i).count::<ZeroBits>()),
-                bits_a.rank::<ZeroBits>(i)
-            );
+            assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
+            assert_eq!(Some(make(i).count_zeros()), bits_a.rank_zeros(i));
         }
-        assert_eq!(None, bits_a.rank::<OneBits>(16));
-        assert_eq!(None, bits_a.rank::<ZeroBits>(16));
-        assert_eq!(None, make(13).rank::<OneBits>(13));
-        assert_eq!(None, make(13).rank::<ZeroBits>(13));
-        assert_eq!(bits_a.rank::<OneBits>(12), make(13).rank::<OneBits>(12));
-        assert_eq!(bits_a.rank::<ZeroBits>(12), make(13).rank::<ZeroBits>(12));
+        assert_eq!(None, bits_a.rank_ones(16));
+        assert_eq!(None, bits_a.rank_zeros(16));
+        assert_eq!(None, make(13).rank_ones(13));
+        assert_eq!(None, make(13).rank_zeros(13));
+        assert_eq!(bits_a.rank_ones(12), make(13).rank_ones(12));
+        assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
     }
 
     #[test]
@@ -293,8 +349,8 @@ mod tests {
         let pattern_a = [0xff, 0xaau8];
         let bytes_a = &pattern_a[..];
         let make = |len: u64| Bits::from(bytes_a, len).expect("valid");
-        assert_eq!(Some(14), make(16).select::<OneBits>(11));
-        assert_eq!(None, make(14).select::<OneBits>(11));
+        assert_eq!(Some(14), make(16).select_ones(11));
+        assert_eq!(None, make(14).select_ones(11));
     }
 
     quickcheck! {
@@ -302,13 +358,13 @@ mod tests {
             let mut running_rank_ones = 0;
             let mut running_rank_zeros = 0;
             for idx in 0..bits.used_bits() {
-                assert_eq!(Some(running_rank_ones), bits.rank::<OneBits>(idx));
-                assert_eq!(Some(running_rank_zeros), bits.rank::<ZeroBits>(idx));
+                assert_eq!(Some(running_rank_ones), bits.rank_ones(idx));
+                assert_eq!(Some(running_rank_zeros), bits.rank_zeros(idx));
                 if bits.get(idx).unwrap() {
-                    assert_eq!(Some(idx), bits.select::<OneBits>(running_rank_ones));
+                    assert_eq!(Some(idx), bits.select_ones(running_rank_ones));
                     running_rank_ones += 1;
                 } else {
-                    assert_eq!(Some(idx), bits.select::<ZeroBits>(running_rank_zeros));
+                    assert_eq!(Some(idx), bits.select_zeros(running_rank_zeros));
                     running_rank_zeros += 1;
                 }
             }
