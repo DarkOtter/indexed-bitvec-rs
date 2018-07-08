@@ -26,21 +26,21 @@ use rand::{Rng, SeedableRng, XorShiftRng};
 fn rng() -> XorShiftRng {
     let seed = [
         42,
-        81,
-        133,
-        183,
-        231,
-        9,
-        13,
-        87,
-        13,
-        142,
-        13,
-        98,
+        34,
+        97,
+        65,
+        1,
+        34,
+        172,
+        37,
+        21,
         182,
-        176,
-        41,
-        71,
+        97,
+        43,
+        2,
+        98,
+        12,
+        7,
     ];
     XorShiftRng::from_seed(seed)
 }
@@ -65,7 +65,7 @@ fn count_bits(c: &mut Criterion) {
     c.bench_function("count_bits", move |b| {
         b.iter(|| {
             assert_eq!(
-                data.count::<OneBits>() + data.count::<ZeroBits>(),
+                data.count_ones() + data.count_zeros(),
                 data.bits().used_bits()
             )
         })
@@ -79,8 +79,8 @@ fn rank_times_1000(c: &mut Criterion) {
     let indexes: Vec<_> = (0..1000).map(|_| rng.gen_range(0, n_bits)).collect();
     c.bench_function("rank_times_1000", move |b| {
         b.iter(|| for idx in indexes.iter().cloned() {
-            let rank_ones = data.rank::<OneBits>(idx).unwrap();
-            let rank_zeros = data.rank::<ZeroBits>(idx).unwrap();
+            let rank_ones = data.rank_ones(idx).unwrap();
+            let rank_zeros = data.rank_zeros(idx).unwrap();
             assert_eq!(rank_ones + rank_zeros, idx)
         })
     });
@@ -89,21 +89,21 @@ fn rank_times_1000(c: &mut Criterion) {
 fn select_times_1000(c: &mut Criterion) {
     let mut rng = rng();
     let data = random_data_1gb(&mut rng);
-    let count_ones = data.count::<OneBits>();
-    let count_zeros = data.count::<ZeroBits>();
+    let count_ones = data.count_ones();
+    let count_zeros = data.count_zeros();
     let ones_indexes: Vec<_> = (0..1000).map(|_| rng.gen_range(0, count_ones)).collect();
     let zeros_indexes: Vec<_> = (0..1000).map(|_| rng.gen_range(0, count_zeros)).collect();
     let data_ones = data.clone();
     let data_zeros = data;
     c.bench_function("select_ones_times_1000", move |b| {
         b.iter(|| for idx in ones_indexes.iter().cloned() {
-            let select_ones = data_ones.select::<OneBits>(idx).unwrap();
+            let select_ones = data_ones.select_ones(idx).unwrap();
             assert!(select_ones >= idx)
         })
     });
     c.bench_function("select_zeros_times_1000", move |b| {
         b.iter(|| for idx in zeros_indexes.iter().cloned() {
-            let select_zeros = data_zeros.select::<ZeroBits>(idx).unwrap();
+            let select_zeros = data_zeros.select_zeros(idx).unwrap();
             assert!(select_zeros >= idx)
         })
     });

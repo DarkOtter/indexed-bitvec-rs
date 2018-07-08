@@ -1,4 +1,4 @@
-# Indexed BitVec
+# Indexed BitVec [![Build Status](https://travis-ci.org/DarkOtter/indexed-bitvec-rs.svg?branch=master)](https://travis-ci.org/DarkOtter/indexed-bitvec-rs)
 
 This library provides an indexing system for bitvectors which should hopefully
 allow fast rank and select operations. The library has not yet been completed,
@@ -22,8 +22,8 @@ Timings were made:
 |-------------|--------|
 | build_index | ~200ms |
 | count       | ~2ns   |
-| rank        | ~45ns  |
-| select      | ~100ns |
+| rank        | ~55ns  |
+| select      | ~110ns |
 
 The use of target-cpu is likely to have a significant effect on the speed of
 the operations as it allows llvm & rust to use vectorisation & popcount

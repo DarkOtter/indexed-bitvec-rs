@@ -16,7 +16,6 @@
 //! A bitvector with an index to allow fast rank and select.
 use std::ops::{Deref, DerefMut};
 use indexed_bitvec_core::{Bits, index_raw};
-use ones_or_zeros::OnesOrZeros;
 use super::parallelism_generic::{ExecutionMethod, Sequential, Parallel};
 
 /// Bits stored with extra index data for fast rank and select.
@@ -61,33 +60,62 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
         self.index.deref()
     }
 
+    #[inline]
     pub fn bits(&self) -> Bits<&[u8]> {
         self.bits.clone_ref()
     }
 
     /// Discard the index and get the original bit sequence storage back.
+    #[inline]
     pub fn decompose(self) -> Bits<T> {
         self.bits
     }
 
-    /// Count the set/unset bits (fast *O(1)*).
-    pub fn count<W: OnesOrZeros>(&self) -> u64 {
-        index_raw::count::<W>(self.index(), self.bits())
+    /// Count the set bits (fast *O(1)*).
+    #[inline]
+    pub fn count_ones(&self) -> u64 {
+        index_raw::count_ones(self.index(), self.bits())
     }
 
-    /// Count the set/unset bits before a position in the bits (*O(1)*).
+    /// Count the unset bits (fast *O(1)*).
+    #[inline]
+    pub fn count_zeros(&self) -> u64 {
+        index_raw::count_zeros(self.index(), self.bits())
+    }
+
+    /// Count the set bits before a position in the bits (*O(1)*).
     ///
     /// Returns `None` it the index is out of bounds.
-    pub fn rank<W: OnesOrZeros>(&self, idx: u64) -> Option<u64> {
-        index_raw::rank::<W>(self.index(), self.bits(), idx)
+    #[inline]
+    pub fn rank_ones(&self, idx: u64) -> Option<u64> {
+        index_raw::rank_ones(self.index(), self.bits(), idx)
     }
 
-    /// Find the position of a bit by its rank (*O(log n)*).
+    /// Count the unset bits before a position in the bits (*O(1)*).
+    ///
+    /// Returns `None` it the index is out of bounds.
+    #[inline]
+    pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
+        index_raw::rank_zeros(self.index(), self.bits(), idx)
+    }
+
+    /// Find the position of a set bit by its rank (*O(log n)*).
     ///
     /// Returns `None` if no suitable bit is found. It is
-    /// always the case otherwise that `rank::<W>(result) == target_rank`
-    /// and `get(result) == Some(W::is_ones())`.
-    pub fn select<W: OnesOrZeros>(&self, target_rank: u64) -> Option<u64> {
-        index_raw::select::<W>(self.index(), self.bits(), target_rank)
+    /// always the case otherwise that `rank_ones(result) == Some(target_rank)`
+    /// and `get(result) == Some(true)`.
+    #[inline]
+    pub fn select_ones(&self, target_rank: u64) -> Option<u64> {
+        index_raw::select_ones(self.index(), self.bits(), target_rank)
+    }
+
+    /// Find the position of an unset bit by its rank (*O(log n)*).
+    ///
+    /// Returns `None` if no suitable bit is found. It is
+    /// always the case otherwise that `rank_zeros(result) == Some(target_rank)`
+    /// and `get(result) == Some(false)`.
+    #[inline]
+    pub fn select_zeros(&self, target_rank: u64) -> Option<u64> {
+        index_raw::select_zeros(self.index(), self.bits(), target_rank)
     }
 }
