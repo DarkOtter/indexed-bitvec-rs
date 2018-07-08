@@ -17,6 +17,7 @@
 use ones_or_zeros::OnesOrZeros;
 use word::{select_ones_u16, Word};
 
+#[inline]
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
     let byte_idx = (idx_bits / 8) as usize;
     let idx_in_byte = (idx_bits % 8) as usize;

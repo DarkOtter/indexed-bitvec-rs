@@ -38,17 +38,20 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     }
 
     /// All of the bytes stored in the byte sequence: not just the ones actually used.
+    #[inline]
     pub fn all_bytes(&self) -> &[u8] {
         (self.0).0.deref()
     }
 
     /// The number of bits used in the storage.
+    #[inline]
     pub fn used_bits(&self) -> u64 {
         (self.0).1
     }
 
     /// The used bytes of the byte sequence: bear in mind some of the bits in the
     /// last byte may be unused.
+    #[inline]
     pub fn bytes(&self) -> &[u8] {
         let all_bytes = self.all_bytes();
         debug_assert!(big_enough(all_bytes, self.used_bits()));
@@ -58,6 +61,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     }
 
     /// Deconstruct the bits storage to get back what it was constructed from.
+    #[inline]
     pub fn decompose(self) -> (T, u64) {
         self.0
     }
@@ -74,6 +78,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// assert_eq!(bits.get(14), Some(true));
     /// assert_eq!(bits.get(15), None);
     /// ```
+    #[inline]
     pub fn get(&self, idx_bits: u64) -> Option<bool> {
         if idx_bits >= self.used_bits() {
             None
@@ -110,6 +115,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// assert_eq!(bits.count_zeros(), 1);
     /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
     /// ```
+    #[inline]
     pub fn count_zeros(&self) -> u64 {
         ZeroBits::convert_count(self.count_ones(), self.used_bits())
     }
@@ -162,6 +168,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// assert_eq!(bits.rank_zeros(9), Some(1));
     /// assert_eq!(bits.rank_ones(15), None);
     /// ```
+    #[inline]
     pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
         self.rank_ones(idx).map(|rank_ones| {
             ZeroBits::convert_count(rank_ones, idx)

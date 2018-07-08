@@ -106,6 +106,7 @@ impl Word {
         Self::from(!u64::from(self))
     }
 
+    #[inline]
     fn desired_bits_as_ones<W: OnesOrZeros>(self) -> Self {
         if W::is_ones() {
             self
@@ -115,11 +116,13 @@ impl Word {
     }
 
     /// Count the set bits.
+    #[inline(always)]
     pub fn count_ones(self) -> u32 {
         u64::from(self).count_ones()
     }
 
     /// Count the unset bits.
+    #[inline(always)]
     pub fn count_zeros(self) -> u32 {
         u64::from(self).count_zeros()
     }
@@ -176,6 +179,7 @@ impl Word {
         Some(res)
     }
 
+    #[inline]
     pub(crate) fn select<W: OnesOrZeros>(self, nth: u32) -> Option<u32> {
         self.desired_bits_as_ones::<W>().select_ones(nth)
     }
@@ -185,6 +189,7 @@ impl Word {
     /// Returns `None` if no suitable bit is found. It is
     /// always the case otherwise that `rank_zeros(result) == Some(target_rank)`
     /// and `get(result) == Some(false)`.
+    #[inline]
     pub fn select_zeros(self, nth: u32) -> Option<u32> {
         self.select::<ZeroBits>(nth)
     }
