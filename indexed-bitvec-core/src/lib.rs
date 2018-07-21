@@ -15,9 +15,6 @@
 */
 //! Core operations to create indexes used to perform
 //! fast rank & select operations on bitvectors.
-//!
-//! This crate is still under heavy development,
-//! so it will not be very stable in its interface yet.
 #![no_std]
 
 #[cfg(test)]
