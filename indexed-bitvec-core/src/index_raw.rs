@@ -26,6 +26,31 @@ use super::Bits;
 use ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 use core::cmp::min;
 
+impl<'data> Bits<&'data [u8]> {
+    /// Split the bits into a sequence of chunks of up to *n* bytes.
+    fn chunks_by_bytes<'s>(&'s self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&'s [u8]>> {
+
+        let bits_per_chunk = (bytes_per_chunk as u64) * 8;
+        self.bytes().chunks(bytes_per_chunk).enumerate().map(
+            move |(i, chunk)| {
+                let used_bits = i as u64 * bits_per_chunk;
+                let bits = min(self.used_bits() - used_bits, bits_per_chunk);
+                Bits::from(chunk, bits).expect("Size invariant violated")
+            },
+        )
+    }
+
+    /// Drop the first *n* bytes of bits from the front of the sequence.
+    fn drop_bytes<'s>(&'s self, n_bytes: usize) -> Bits<&'s [u8]> {
+        let bytes = self.bytes();
+        if n_bytes >= bytes.len() {
+            panic!("Index out of bounds: tried to drop all of the bits");
+        }
+        Bits::from(&bytes[n_bytes..], self.used_bits() - (n_bytes as u64 * 8))
+            .expect("Checked sufficient bytes are present")
+    }
+}
+
 mod size {
     use super::*;
 
