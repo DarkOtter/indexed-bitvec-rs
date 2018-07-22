@@ -3,6 +3,8 @@ name = "indexed_bitvec"
 version = "1.0.0"
 authors = ["DarkOtter <>"]
 license = "Apache-2.0"
+description = "An indexed bitvector with (hopefully) fast rank and select operations."
+homepage = "https://github.com/DarkOtter/indexed-bitvec-rs"
 
 [dependencies.indexed_bitvec_core]
 path = "../indexed-bitvec-core"
