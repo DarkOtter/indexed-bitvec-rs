@@ -4,7 +4,7 @@ version = "2.0.0"
 authors = ["DarkOtter <>"]
 license = "Apache-2.0"
 description = "Core operations on indexed bitvectors including (hopefully) fast rank and select operations."
-homepage = "https://github.com/DarkOtter/indexed-bitvec-rs"
+repository = "https://github.com/DarkOtter/indexed-bitvec-rs"
 
 [dev-dependencies]
 rand = "0.5"
