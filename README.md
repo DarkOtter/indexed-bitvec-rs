@@ -1,4 +1,7 @@
-# Indexed BitVec [![Build Status](https://travis-ci.org/DarkOtter/indexed-bitvec-rs.svg?branch=master)](https://travis-ci.org/DarkOtter/indexed-bitvec-rs)
+# Indexed Bitvector
+[![Build status](https://travis-ci.org/DarkOtter/indexed-bitvec-rs.svg?branch=master)](https://travis-ci.org/DarkOtter/indexed-bitvec-rs)
+[![Latest version](https://img.shields.io/crates/v/indexed_bitvec.svg)](https://crates.io/crates/indexed_bitvec)
+[![Documentation](https://docs.rs/indexed_bitvec/badge.svg)](https://docs.rs/indexed_bitvec)
 
 This library provides an indexing system for bitvectors which should hopefully
 allow fast rank and select operations. The library has not yet been completed,
