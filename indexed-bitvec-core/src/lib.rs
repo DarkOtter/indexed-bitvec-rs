@@ -15,9 +15,6 @@
 */
 //! Core operations to create indexes used to perform
 //! fast rank & select operations on bitvectors.
-//!
-//! This crate is still under heavy development,
-//! so it will not be very stable in its interface yet.
 #![no_std]
 
 #[cfg(test)]
@@ -64,7 +61,6 @@ pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
 mod ones_or_zeros;
 
 mod word;
-pub use word::Word;
 
 mod bytes;
 

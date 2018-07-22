@@ -17,7 +17,6 @@
 use super::ceil_div_u64;
 use bytes;
 use ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
-use core::cmp::min;
 use core::ops::Deref;
 
 /// Bits stored as a sequence of bytes (most significant bit first).
@@ -223,38 +222,6 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// ```
     pub fn select_zeros(&self, target_rank: u64) -> Option<u64> {
         self.select::<ZeroBits>(target_rank)
-    }
-
-    /// Split the bits into a sequence of chunks of up to *n* bytes.
-    pub fn chunks_by_bytes(&self, bytes_per_chunk: usize) -> impl Iterator<Item = Bits<&[u8]>> {
-        let available_bits = self.used_bits();
-        let bits_per_chunk = (bytes_per_chunk as u64) * 8;
-        self.bytes().chunks(bytes_per_chunk).enumerate().map(
-            move |(i, chunk)| {
-                let used_bits = i as u64 * bits_per_chunk;
-                let bits = min(available_bits - used_bits, bits_per_chunk);
-                Bits::from(chunk, bits).expect("Size invariant violated")
-            },
-        )
-    }
-
-    /// Drop the first *n* bytes of bits from the front of the sequence.
-    ///
-    /// ```
-    /// use indexed_bitvec_core::*;
-    /// let bits = Bits::from(vec![0xFF, 0x00], 16).unwrap();
-    /// assert_eq!(bits.get(0), Some(true));
-    /// assert_eq!(bits.get(8), Some(false));
-    /// assert_eq!(bits.drop_bytes(1).get(0), Some(false));
-    /// assert_eq!(bits.drop_bytes(1).get(8), None);
-    /// ```
-    pub fn drop_bytes(&self, n_bytes: usize) -> Bits<&[u8]> {
-        let bytes = self.bytes();
-        if n_bytes >= bytes.len() {
-            panic!("Index out of bounds: tried to drop all of the bits");
-        }
-        Bits::from(&bytes[n_bytes..], self.used_bits() - (n_bytes as u64 * 8))
-            .expect("Checked sufficient bytes are present")
     }
 
     /// Create a reference to these same bits.
