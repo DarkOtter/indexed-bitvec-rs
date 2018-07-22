@@ -4,9 +4,7 @@
 [![Documentation](https://docs.rs/indexed_bitvec/badge.svg)](https://docs.rs/indexed_bitvec)
 
 This library provides an indexing system for bitvectors which should hopefully
-allow fast rank and select operations. The library has not yet been completed,
-tested, measured for speed or optimised so it's not yet certain this will
-work.
+allow fast rank and select operations.
 
 This library is based on the design proposed by Zhou, Andersen and Kaminsky in
 *Space–Efficient, High–Performance Rank & Select Structures on Uncompressed Bit Sequences*.
