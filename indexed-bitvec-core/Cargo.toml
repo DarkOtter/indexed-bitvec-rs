@@ -8,5 +8,6 @@ description = "Core operations on indexed bitvectors including (hopefully) fast 
 repository = "https://github.com/DarkOtter/indexed-bitvec-rs"
 
 [dev-dependencies]
-rand = "0.5"
-quickcheck = "0.6"
+rand = "0.6"
+rand_xorshift = "0.1"
+quickcheck = "0.7"

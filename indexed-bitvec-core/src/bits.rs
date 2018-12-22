@@ -239,6 +239,7 @@ mod tests {
 
     impl Arbitrary for Bits<Box<[u8]>> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+            use rand::Rng;
             let data = <Vec<u8>>::arbitrary(g);
             let all_bits = data.len() as u64 * 8;
             let overflow = g.gen_range(0, 64);

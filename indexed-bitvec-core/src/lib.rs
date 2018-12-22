@@ -23,6 +23,8 @@ extern crate std;
 
 #[cfg(test)]
 extern crate rand;
+#[cfg(test)]
+extern crate rand_xorshift;
 
 #[cfg(test)]
 #[macro_use]

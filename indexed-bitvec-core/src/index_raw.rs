@@ -794,7 +794,8 @@ mod tests {
 
     #[test]
     fn small_indexed_tests() {
-        use rand::{SeedableRng, XorShiftRng, RngCore, Rng};
+        use rand::{SeedableRng, RngCore, Rng};
+        use rand_xorshift::XorShiftRng;
         let n_bits: u64 = (1 << 19) - 1;
         let n_bytes: usize = ceil_div_u64(n_bits, 8) as usize;
         let seed = [
