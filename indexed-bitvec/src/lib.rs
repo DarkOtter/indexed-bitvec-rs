@@ -21,4 +21,4 @@ extern crate indexed_bitvec_core;
 pub use indexed_bitvec_core::Bits;
 
 mod indexed_bits;
-pub use indexed_bits::IndexedBits;
+pub use crate::indexed_bits::IndexedBits;

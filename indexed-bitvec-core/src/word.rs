@@ -14,7 +14,7 @@
    limitations under the License.
 */
 //! Tools for working with a single (64bit) word as bits.
-use ones_or_zeros::{OnesOrZeros, ZeroBits};
+use crate::ones_or_zeros::{OnesOrZeros, ZeroBits};
 
 /// The 64 bits of a single word, as a sequence from MSB to LSB.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -200,7 +200,6 @@ mod tests {
     use super::*;
     use std::boxed::Box;
     use std::vec::Vec;
-    use quickcheck;
     use quickcheck::Arbitrary;
 
     impl Arbitrary for Word {

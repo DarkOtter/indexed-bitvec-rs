@@ -15,8 +15,8 @@
 */
 //! Type to represent bits, and basic count/rank/select functions for it.
 use super::ceil_div_u64;
-use bytes;
-use ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
+use crate::bytes;
+use crate::ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
 use core::ops::Deref;
 
 /// Bits stored as a sequence of bytes (most significant bit first).
@@ -235,7 +235,6 @@ mod tests {
     use super::*;
     use std::boxed::Box;
     use std::vec::Vec;
-    use quickcheck;
     use quickcheck::Arbitrary;
 
     impl Arbitrary for Bits<Box<[u8]>> {
