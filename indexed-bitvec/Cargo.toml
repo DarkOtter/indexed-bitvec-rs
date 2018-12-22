@@ -1,11 +1,14 @@
 [package]
 name = "indexed_bitvec"
 version = "2.1.0"
-authors = ["DarkOtter <>"]
 edition = "2018"
-license = "Apache-2.0"
 description = "An indexed bitvector with (hopefully) fast rank and select operations."
 repository = "https://github.com/DarkOtter/indexed-bitvec-rs"
+
+license = "Apache-2.0"
+authors = ["DarkOtter <>"]
+keywords = ["index", "indexing", "bits", "bitvector"]
+categories = ["algorithms", "data-structures"]
 
 [dependencies.indexed_bitvec_core]
 path = "../indexed-bitvec-core"
