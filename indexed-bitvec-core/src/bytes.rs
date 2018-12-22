@@ -14,8 +14,8 @@
    limitations under the License.
 */
 //! Functions to run bit operations on bits stored as bytes (MSB first).
-use ones_or_zeros::OnesOrZeros;
-use word::{select_ones_u16, Word};
+use crate::ones_or_zeros::OnesOrZeros;
+use crate::word::{select_ones_u16, Word};
 
 #[inline]
 pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
@@ -167,7 +167,7 @@ pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
 mod tests {
     use super::*;
     use std::vec::Vec;
-    use ones_or_zeros::{OneBits, ZeroBits};
+    use crate::ones_or_zeros::{OneBits, ZeroBits};
 
     #[test]
     fn test_get() {

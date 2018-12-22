@@ -23,7 +23,7 @@
 use super::with_offset::WithOffset;
 use super::{ceil_div, ceil_div_u64};
 use super::Bits;
-use ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
+use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 use core::cmp::min;
 
 impl<'data> Bits<&'data [u8]> {
