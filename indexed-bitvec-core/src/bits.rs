@@ -230,6 +230,57 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     }
 }
 
+use core::cmp::{min, Ordering, Ord};
+
+
+fn cmp_bits(l: Bits<&[u8]>, r: Bits<&[u8]>) -> Ordering {
+    let common_len = min(l.used_bits(), r.used_bits());
+    let common_full_byte_len = (common_len / 8) as usize;
+    let full_bytes_l = &(l.all_bytes())[..common_full_byte_len];
+    let full_bytes_r = &(r.all_bytes())[..common_full_byte_len];
+    for (byte_l, byte_r) in full_bytes_l.iter().zip(full_bytes_r.iter()) {
+        match byte_l.cmp(byte_r) {
+            Ordering::Equal => (),
+            r => return r,
+        }
+    }
+
+    for idx in ((common_full_byte_len * 8) as u64)..common_len {
+        let l_bit = l.get(idx).expect("If we don't have this bit there is a bug in Bits implementation");
+        let r_bit = r.get(idx).expect("If we don't have this bit there is a bug in Bits implementation");
+        match l_bit.cmp(&r_bit) {
+            Ordering::Equal => (),
+            r => return r,
+        }
+    }
+
+    l.used_bits().cmp(&r.used_bits())
+}
+
+
+impl<T: Deref<Target = [u8]>> core::cmp::Ord for Bits<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        cmp_bits(self.clone_ref(), other.clone_ref())
+    }
+}
+
+impl<T: Deref<Target = [u8]>> core::cmp::PartialOrd for Bits<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Deref<Target = [u8]>> core::cmp::Eq for Bits<T> {
+
+}
+
+impl<T: Deref<Target = [u8]>> core::cmp::PartialEq for Bits<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.used_bits() == other.used_bits()
+            && self.cmp(other) == Ordering::Equal
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,5 +394,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    
+    impl<T: Deref<Target = [u8]>> Bits<T> {
+        fn to_bool_vec_slow(&self) -> Vec<bool> {
+            (0..self.used_bits())
+                .map(|idx| self.get(idx).unwrap())
+                .collect()
+        }
+    }
+
+    quickcheck! {
+        fn test_cmp_eq_model(l: Bits<Box<[u8]>>, r: Bits<Box<[u8]>>) -> () {
+            let l_vec = l.to_bool_vec_slow();
+            let r_vec = r.to_bool_vec_slow();
+            assert_eq!(l_vec.cmp(&r_vec), l.cmp(&r));
+            assert_eq!(l_vec.eq(&r_vec), l.eq(&r));
+        }
+    }
+
+    #[test]
+    fn test_eq_cmp() {
+        fn check (expected: Ordering,
+                  l: Option<Bits<Vec<u8>>>,
+                  r: Option<Bits<Vec<u8>>>) {
+            let l = l.unwrap();
+            let r = r.unwrap();
+            let expected_eq = match expected {
+                Ordering::Equal => true,
+                _ => false,
+            };
+            assert_eq!(expected_eq, l.eq(&r));
+            assert_eq!(expected, l.cmp(&r));
+        }
+
+        // Should ignore extra bits
+        check(Ordering::Equal,
+              Bits::from(vec![0xff, 0xf0], 12),
+              Bits::from(vec![0xff, 0xff], 12));
+
+        check(Ordering::Equal,
+              Bits::from(vec![], 0),
+              Bits::from(vec![], 0));
+        check(Ordering::Less,
+              Bits::from(vec![0xff], 0),
+              Bits::from(vec![0xff], 1));
+        check(Ordering::Greater,
+              Bits::from(vec![0xff], 1),
+              Bits::from(vec![0xff], 0));
+        check(Ordering::Equal,
+              Bits::from(vec![0xff], 1),
+              Bits::from(vec![0xff], 1));
+        check(Ordering::Less,
+              Bits::from(vec![0x00], 1),
+              Bits::from(vec![0xff], 1));
+        check(Ordering::Greater,
+              Bits::from(vec![0xff], 1),
+              Bits::from(vec![0x00], 1));
     }
 }
