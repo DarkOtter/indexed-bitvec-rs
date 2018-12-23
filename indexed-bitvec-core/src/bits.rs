@@ -416,23 +416,41 @@ mod tests {
 
     #[test]
     fn test_eq_cmp() {
-        // Should ignore extra bits
-        let l = Bits::from(vec![0xff, 0xf0], 12);
-        let r = Bits::from(vec![0xff, 0xff], 12);
-        assert_eq!(true, l.eq(&r));
-        assert_eq!(Ordering::Equal, l.cmp(&r));
+        fn check (expected: Ordering,
+                  l: Option<Bits<Vec<u8>>>,
+                  r: Option<Bits<Vec<u8>>>) {
+            let l = l.unwrap();
+            let r = r.unwrap();
+            let expected_eq = match expected {
+                Ordering::Equal => true,
+                _ => false,
+            };
+            assert_eq!(expected_eq, l.eq(&r));
+            assert_eq!(expected, l.cmp(&r));
+        }
 
-        assert_eq!(Ordering::Equal,
-                   Bits::from(vec![], 0).cmp(&Bits::from(vec![], 0)));
-        assert_eq!(Ordering::Less,
-                   Bits::from(vec![0xff], 0).cmp(&Bits::from(vec![0xff], 1)));
-        assert_eq!(Ordering::Greater,
-                   Bits::from(vec![0xff], 1).cmp(&Bits::from(vec![0xff], 0)));
-        assert_eq!(Ordering::Equal,
-                   Bits::from(vec![0xff], 1).cmp(&Bits::from(vec![0xff], 1)));
-        assert_eq!(Ordering::Less,
-                   Bits::from(vec![0x00], 1).cmp(&Bits::from(vec![0xff], 1)));
-        assert_eq!(Ordering::Greater,
-                   Bits::from(vec![0xff], 1).cmp(&Bits::from(vec![0x00], 1)));
+        // Should ignore extra bits
+        check(Ordering::Equal,
+              Bits::from(vec![0xff, 0xf0], 12),
+              Bits::from(vec![0xff, 0xff], 12));
+
+        check(Ordering::Equal,
+              Bits::from(vec![], 0),
+              Bits::from(vec![], 0));
+        check(Ordering::Less,
+              Bits::from(vec![0xff], 0),
+              Bits::from(vec![0xff], 1));
+        check(Ordering::Greater,
+              Bits::from(vec![0xff], 1),
+              Bits::from(vec![0xff], 0));
+        check(Ordering::Equal,
+              Bits::from(vec![0xff], 1),
+              Bits::from(vec![0xff], 1));
+        check(Ordering::Less,
+              Bits::from(vec![0x00], 1),
+              Bits::from(vec![0xff], 1));
+        check(Ordering::Greater,
+              Bits::from(vec![0xff], 1),
+              Bits::from(vec![0x00], 1));
     }
 }
