@@ -406,11 +406,33 @@ mod tests {
     }
 
     quickcheck! {
-        fn test_cmp_eq(l: Bits<Box<[u8]>>, r: Bits<Box<[u8]>>) -> () {
+        fn test_cmp_eq_model(l: Bits<Box<[u8]>>, r: Bits<Box<[u8]>>) -> () {
             let l_vec = l.to_bool_vec_slow();
             let r_vec = r.to_bool_vec_slow();
             assert_eq!(l_vec.cmp(&r_vec), l.cmp(&r));
             assert_eq!(l_vec.eq(&r_vec), l.eq(&r));
         }
+    }
+
+    #[test]
+    fn test_eq_cmp() {
+        // Should ignore extra bits
+        let l = Bits::from(vec![0xff, 0xf0], 12);
+        let r = Bits::from(vec![0xff, 0xff], 12);
+        assert_eq!(true, l.eq(&r));
+        assert_eq!(Ordering::Equal, l.cmp(&r));
+
+        assert_eq!(Ordering::Equal,
+                   Bits::from(vec![], 0).cmp(&Bits::from(vec![], 0)));
+        assert_eq!(Ordering::Less,
+                   Bits::from(vec![0xff], 0).cmp(&Bits::from(vec![0xff], 1)));
+        assert_eq!(Ordering::Greater,
+                   Bits::from(vec![0xff], 1).cmp(&Bits::from(vec![0xff], 0)));
+        assert_eq!(Ordering::Equal,
+                   Bits::from(vec![0xff], 1).cmp(&Bits::from(vec![0xff], 1)));
+        assert_eq!(Ordering::Less,
+                   Bits::from(vec![0x00], 1).cmp(&Bits::from(vec![0xff], 1)));
+        assert_eq!(Ordering::Greater,
+                   Bits::from(vec![0xff], 1).cmp(&Bits::from(vec![0x00], 1)));
     }
 }
