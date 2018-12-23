@@ -1,6 +1,6 @@
 [package]
 name = "indexed_bitvec_core"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2018"
 description = "Core operations on indexed bitvectors including (hopefully) fast rank and select operations."
 repository = "https://github.com/DarkOtter/indexed-bitvec-rs"
