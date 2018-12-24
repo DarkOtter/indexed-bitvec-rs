@@ -9,6 +9,6 @@ matrix:
   fast_finish: true
 script:
   - cargo test --verbose --all
-  - test_features.sh
+  - ./test_features.sh
   - cargo build --verbose --all --release
 
