@@ -109,6 +109,6 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
 impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf for IndexedBits<T> {
     fn heap_size_of_children(&self) -> usize {
         self.index.heap_size_of_children()
-            + self.bits.heap_size_of_children();
+            + self.bits.heap_size_of_children()
     }
 }
