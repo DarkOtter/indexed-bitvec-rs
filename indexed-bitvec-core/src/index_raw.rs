@@ -20,9 +20,9 @@
 //! so you may run into panics from e.g. out of bounds accesses
 //! to slices. They should all be memory-safe though.
 
-use super::with_offset::WithOffset;
-use super::{ceil_div, ceil_div_u64};
-use super::Bits;
+use crate::with_offset::WithOffset;
+use crate::{ceil_div, ceil_div_u64};
+use crate::bits::Bits;
 use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 use core::cmp::min;
 

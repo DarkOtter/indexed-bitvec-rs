@@ -70,7 +70,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` for out-of-bounds.
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(7), Some(false));
@@ -90,7 +90,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Count the set bits (*O(n)*).
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count_ones(), 14);
     /// assert_eq!(bits.count_zeros(), 1);
@@ -108,7 +108,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Count the unset bits (*O(n)*).
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count_ones(), 14);
     /// assert_eq!(bits.count_zeros(), 1);
@@ -124,7 +124,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` it the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.used_bits()).all(|idx|
     ///     bits.rank_ones(idx).unwrap()
@@ -153,7 +153,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` it the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.used_bits()).all(|idx|
     ///     bits.rank_ones(idx).unwrap()
@@ -195,7 +195,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// and `get(result) == Some(true)`.
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.select_ones(6), Some(6));
     /// assert_eq!(bits.select_ones(7), Some(8));
@@ -213,7 +213,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// and `get(result) == Some(false)`.
     ///
     /// ```
-    /// use indexed_bitvec_core::*;
+    /// use indexed_bitvec_core::bits::Bits;
     /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.select_ones(6), Some(6));
     /// assert_eq!(bits.select_ones(7), Some(8));
@@ -232,22 +232,25 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 
 use core::cmp::{min, Ordering, Ord};
 
+fn must_have_or_bug<T>(opt: Option<T>) -> T {
+    opt.expect(
+        "If this is None there is a bug in Bits implementation")
+}
 
 fn cmp_bits(l: Bits<&[u8]>, r: Bits<&[u8]>) -> Ordering {
     let common_len = min(l.used_bits(), r.used_bits());
     let common_full_byte_len = (common_len / 8) as usize;
+
     let full_bytes_l = &(l.all_bytes())[..common_full_byte_len];
     let full_bytes_r = &(r.all_bytes())[..common_full_byte_len];
-    for (byte_l, byte_r) in full_bytes_l.iter().zip(full_bytes_r.iter()) {
-        match byte_l.cmp(byte_r) {
-            Ordering::Equal => (),
-            r => return r,
-        }
-    }
+    match full_bytes_l.cmp(full_bytes_r) {
+        Ordering::Equal => (),
+        r => return r,
+    };
 
     for idx in ((common_full_byte_len * 8) as u64)..common_len {
-        let l_bit = l.get(idx).expect("If we don't have this bit there is a bug in Bits implementation");
-        let r_bit = r.get(idx).expect("If we don't have this bit there is a bug in Bits implementation");
+        let l_bit = must_have_or_bug(l.get(idx));
+        let r_bit = must_have_or_bug(r.get(idx));
         match l_bit.cmp(&r_bit) {
             Ordering::Equal => (),
             r => return r,
@@ -287,6 +290,123 @@ impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSi
         (self.0).0.heap_size_of_children()
     }
 }
+
+#[derive(Debug)]
+pub struct BitIterator<T: core::ops::Deref<Target = [u8]>> {
+    search_from: u64,
+    search_in: Bits<T>,
+}
+
+impl<T: core::ops::Deref<Target = [u8]>> Iterator for BitIterator<T> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<bool> {
+        match self.search_in.get(self.search_from) {
+            None => None,
+            ret => {
+                self.search_from += 1;
+                ret
+            },
+        }
+    }
+}
+
+impl<T: core::ops::Deref<Target = [u8]>> BitIterator<T> {
+    fn next_index<F>(&mut self, with_remaining: F) -> Option<u64>
+        where F: Fn(Bits<&[u8]>, u64) -> Option<u64>
+    {
+        if self.search_from >= self.search_in.used_bits() {
+            return None;
+        }
+
+        let byte_index = (self.search_from / 8) as usize;
+        let byte_offset = self.search_from % 8;
+
+        let byte_index_bits = (byte_index as u64) * 8;
+
+        let remaining_part =
+            must_have_or_bug(Bits::from(
+                &(self.search_in.all_bytes())[byte_index..],
+                self.search_in.used_bits() - byte_index_bits));
+
+        let next_rank = with_remaining(remaining_part, byte_offset);
+
+        match next_rank {
+            None => {
+                self.search_from = self.search_in.used_bits();
+                None
+            },
+            Some(next_sub_idx) => {
+                debug_assert!(next_sub_idx >= byte_offset);
+                let res = byte_index_bits + next_sub_idx;
+                self.search_from = res + 1;
+                Some(res)
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SetBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIterator<T>);
+
+impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        self.0.next_index(|remaining_part, byte_offset| {
+            debug_assert!(byte_offset < 8);
+            let target_rank = must_have_or_bug(remaining_part.rank_ones(byte_offset));
+            remaining_part.select_ones(target_rank)
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ZeroBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIterator<T>);
+
+impl<T: core::ops::Deref<Target = [u8]>> Iterator for ZeroBitIndexIterator<T> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        self.0.next_index(|remaining_part, byte_offset| {
+            debug_assert!(byte_offset < 8);
+            let target_rank = must_have_or_bug(remaining_part.rank_zeros(byte_offset));
+            remaining_part.select_zeros(target_rank)
+        })
+    }
+}
+
+impl<T: core::ops::Deref<Target = [u8]>> IntoIterator for Bits<T> {
+    type Item = bool;
+    type IntoIter = BitIterator<T>;
+
+    fn into_iter(self) -> BitIterator<T> {
+        BitIterator { search_from: 0, search_in: self }
+    }
+}
+
+impl<T: core::ops::Deref<Target = [u8]>> Bits<T> {
+    pub fn iter(&self) -> BitIterator<&[u8]> {
+        self.clone_ref().into_iter()
+    }
+
+    pub fn into_iter_set_bits(self) -> SetBitIndexIterator<T> {
+        SetBitIndexIterator(self.into_iter())
+    }
+
+    pub fn iter_set_bits(&self) -> SetBitIndexIterator<&[u8]> {
+        self.clone_ref().into_iter_set_bits()
+    }
+
+    pub fn into_iter_zero_bits(self) -> ZeroBitIndexIterator<T> {
+        ZeroBitIndexIterator(self.into_iter())
+    }
+
+    pub fn iter_zero_bits(&self) -> ZeroBitIndexIterator<&[u8]> {
+        self.clone_ref().into_iter_zero_bits()
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -459,5 +579,19 @@ mod tests {
         check(Ordering::Greater,
               Bits::from(vec![0xff], 1),
               Bits::from(vec![0x00], 1));
+    }
+
+    quickcheck! {
+        fn fuzz_test_iter(bits: Bits<Box<[u8]>>) -> () {
+            let as_bools: Vec<bool> =
+                (0..bits.used_bits()).map(|idx| bits.get(idx).unwrap()).collect();
+            let ones_locs: Vec<u64> =
+                (0..bits.used_bits()).filter(|&idx| bits.get(idx).unwrap()).collect();
+            let zeros_locs: Vec<u64> =
+                (0..bits.used_bits()).filter(|&idx| !(bits.get(idx).unwrap())).collect();
+            assert_eq!(as_bools, bits.iter().collect::<Vec<_>>());
+            assert_eq!(ones_locs, bits.iter_set_bits().collect::<Vec<_>>());
+            assert_eq!(zeros_locs, bits.iter_zero_bits().collect::<Vec<_>>());
+        }
     }
 }
