@@ -334,6 +334,43 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
     }
 }
 
+#[derive(Debug)]
+pub struct ZeroBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIndexIterator<T>);
+
+impl<T: core::ops::Deref<Target = [u8]>> Iterator for ZeroBitIndexIterator<T> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        let inner = &mut self.0;
+        if inner.search_from >= inner.search_in.used_bits() {
+            return None;
+        }
+
+        let byte_index = (inner.search_from / 8) as usize;
+        let byte_offset = inner.search_from % 8;
+
+        let byte_index_bits = (byte_index as u64) * 8;
+
+        let remaining_part =
+            must_have_or_bug(Bits::from(
+                &(inner.search_in.all_bytes())[byte_index..],
+                inner.search_in.used_bits() - byte_index_bits));
+
+        let target_rank = must_have_or_bug(remaining_part.rank_zeros(byte_offset));
+        match remaining_part.select_zeros(target_rank) {
+            None => {
+                inner.search_from = inner.search_in.used_bits();
+                None
+            },
+            Some(next_sub_idx) => {
+                let res = byte_index_bits + next_sub_idx;
+                inner.search_from = res + 1;
+                Some(res)
+            },
+        }
+    }
+}
+
 impl<T: core::ops::Deref<Target = [u8]>> Bits<T> {
     pub fn into_iter_set_bits(self) -> SetBitIndexIterator<T> {
         SetBitIndexIterator(BitIndexIterator { search_from: 0, search_in: self })
@@ -341,6 +378,14 @@ impl<T: core::ops::Deref<Target = [u8]>> Bits<T> {
 
     pub fn iter_set_bits(&self) -> SetBitIndexIterator<&[u8]> {
         self.clone_ref().into_iter_set_bits()
+    }
+
+    pub fn into_iter_zero_bits(self) -> ZeroBitIndexIterator<T> {
+        ZeroBitIndexIterator(BitIndexIterator { search_from: 0, search_in: self })
+    }
+
+    pub fn iter_zero_bits(&self) -> ZeroBitIndexIterator<&[u8]> {
+        self.clone_ref().into_iter_zero_bits()
     }
 }
 
@@ -516,5 +561,17 @@ mod tests {
         check(Ordering::Greater,
               Bits::from(vec![0xff], 1),
               Bits::from(vec![0x00], 1));
+    }
+
+    quickcheck! {
+        fn fuzz_test_iter_positions(bits: Bits<Box<[u8]>>) -> () {
+            let ones_locs: Vec<u64> =
+                (0..bits.used_bits()).filter(|&idx| bits.get(idx).unwrap()).collect();
+            let zeros_locs: Vec<u64> =
+                (0..bits.used_bits()).filter(|&idx| !(bits.get(idx).unwrap())).collect();
+
+            assert_eq!(ones_locs, bits.iter_set_bits().collect::<Vec<_>>());
+            assert_eq!(zeros_locs, bits.iter_zero_bits().collect::<Vec<_>>());
+        }
     }
 }
