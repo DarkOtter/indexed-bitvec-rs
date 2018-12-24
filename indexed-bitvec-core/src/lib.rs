@@ -69,8 +69,7 @@ mod word;
 
 mod bytes;
 
-mod bits;
-pub use crate::bits::Bits;
+pub mod bits;
 
 mod with_offset;
 

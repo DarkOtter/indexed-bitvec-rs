@@ -1,6 +1,6 @@
 [package]
 name = "indexed_bitvec"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2018"
 description = "An indexed bitvector with (hopefully) fast rank and select operations."
 repository = "https://github.com/DarkOtter/indexed-bitvec-rs"
@@ -16,7 +16,7 @@ implement_heapsize = ["heapsize", "indexed_bitvec_core/implement_heapsize"]
 
 [dependencies.indexed_bitvec_core]
 path = "../indexed-bitvec-core"
-version = "2.2"
+version = "3.0"
 
 [dependencies.heapsize]
 optional = true

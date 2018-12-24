@@ -15,7 +15,8 @@
 */
 //! A bitvector with an index to allow fast rank and select.
 use std::ops::{Deref, DerefMut};
-use indexed_bitvec_core::*;
+use indexed_bitvec_core::bits::Bits;
+use indexed_bitvec_core::index_raw;
 
 /// Bits stored with extra index data for fast rank and select.
 #[derive(Clone, Debug)]
