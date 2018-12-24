@@ -6,3 +6,9 @@ rust:
 matrix:
   allow_failures:
     - rust: nightly
+  fast_finish: true
+script:
+  - cargo test --verbose --all
+  - ./test_features.sh
+  - cargo build --verbose --all --release
+
