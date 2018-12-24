@@ -18,10 +18,12 @@ extern crate indexed_bitvec;
 #[macro_use]
 extern crate criterion;
 extern crate rand;
+extern crate rand_xorshift;
 
 use criterion::Criterion;
 use indexed_bitvec::*;
-use rand::{Rng, RngCore, SeedableRng, XorShiftRng};
+use rand::{Rng, RngCore, SeedableRng};
+use rand_xorshift::XorShiftRng;
 
 fn rng() -> XorShiftRng {
     let seed = [

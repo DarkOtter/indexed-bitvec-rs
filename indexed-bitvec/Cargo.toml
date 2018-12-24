@@ -24,6 +24,7 @@ version = "0.4"
 
 [dev-dependencies]
 rand = "0.6"
+rand_xorshift = "0.1"
 criterion = "0.2"
 
 [[bench]]
