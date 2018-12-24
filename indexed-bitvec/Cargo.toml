@@ -10,9 +10,17 @@ authors = ["DarkOtter <>"]
 keywords = ["index", "indexing", "bits", "bitvector"]
 categories = ["algorithms", "data-structures"]
 
+[features]
+default = []
+implement_heapsize = ["heapsize", "indexed_bitvec_core/implement_heapsize"]
+
 [dependencies.indexed_bitvec_core]
 path = "../indexed-bitvec-core"
 version = "2.2"
+
+[dependencies.heapsize]
+optional = true
+version = "0.4"
 
 [dev-dependencies]
 rand = "0.6"

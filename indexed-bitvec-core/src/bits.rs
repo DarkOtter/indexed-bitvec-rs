@@ -281,6 +281,13 @@ impl<T: Deref<Target = [u8]>> core::cmp::PartialEq for Bits<T> {
     }
 }
 
+#[cfg(feature = "implement_heapsize")]
+impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf for Bits<T> {
+    fn heap_size_of_children(&self) -> usize {
+        (self.0).0.heap_size_of_children()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
