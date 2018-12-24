@@ -297,6 +297,40 @@ struct BitIndexIterator<T: core::ops::Deref<Target = [u8]>> {
     search_in: Bits<T>,
 }
 
+impl<T: core::ops::Deref<Target = [u8]>> BitIndexIterator<T> {
+    fn next<F>(&mut self, with_remaining: F) -> Option<u64>
+        where F: Fn(Bits<&[u8]>, u64) -> Option<u64>
+    {
+        if self.search_from >= self.search_in.used_bits() {
+            return None;
+        }
+
+        let byte_index = (self.search_from / 8) as usize;
+        let byte_offset = self.search_from % 8;
+
+        let byte_index_bits = (byte_index as u64) * 8;
+
+        let remaining_part =
+            must_have_or_bug(Bits::from(
+                &(self.search_in.all_bytes())[byte_index..],
+                self.search_in.used_bits() - byte_index_bits));
+
+        let next_rank = with_remaining(remaining_part, byte_offset);
+
+        match next_rank {
+            None => {
+                self.search_from = self.search_in.used_bits();
+                None
+            },
+            Some(next_sub_idx) => {
+                let res = byte_index_bits + next_sub_idx;
+                self.search_from = res + 1;
+                Some(res)
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SetBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIndexIterator<T>);
 
@@ -304,33 +338,10 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
     type Item = u64;
 
     fn next(&mut self) -> Option<u64> {
-        let inner = &mut self.0;
-        if inner.search_from >= inner.search_in.used_bits() {
-            return None;
-        }
-
-        let byte_index = (inner.search_from / 8) as usize;
-        let byte_offset = inner.search_from % 8;
-
-        let byte_index_bits = (byte_index as u64) * 8;
-
-        let remaining_part =
-            must_have_or_bug(Bits::from(
-                &(inner.search_in.all_bytes())[byte_index..],
-                inner.search_in.used_bits() - byte_index_bits));
-
-        let target_rank = must_have_or_bug(remaining_part.rank_ones(byte_offset));
-        match remaining_part.select_ones(target_rank) {
-            None => {
-                inner.search_from = inner.search_in.used_bits();
-                None
-            },
-            Some(next_sub_idx) => {
-                let res = byte_index_bits + next_sub_idx;
-                inner.search_from = res + 1;
-                Some(res)
-            },
-        }
+        self.0.next(|remaining_part, byte_offset| {
+            let target_rank = must_have_or_bug(remaining_part.rank_ones(byte_offset));
+            remaining_part.select_ones(target_rank)
+        })
     }
 }
 
@@ -341,33 +352,10 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for ZeroBitIndexIterator<T> {
     type Item = u64;
 
     fn next(&mut self) -> Option<u64> {
-        let inner = &mut self.0;
-        if inner.search_from >= inner.search_in.used_bits() {
-            return None;
-        }
-
-        let byte_index = (inner.search_from / 8) as usize;
-        let byte_offset = inner.search_from % 8;
-
-        let byte_index_bits = (byte_index as u64) * 8;
-
-        let remaining_part =
-            must_have_or_bug(Bits::from(
-                &(inner.search_in.all_bytes())[byte_index..],
-                inner.search_in.used_bits() - byte_index_bits));
-
-        let target_rank = must_have_or_bug(remaining_part.rank_zeros(byte_offset));
-        match remaining_part.select_zeros(target_rank) {
-            None => {
-                inner.search_from = inner.search_in.used_bits();
-                None
-            },
-            Some(next_sub_idx) => {
-                let res = byte_index_bits + next_sub_idx;
-                inner.search_from = res + 1;
-                Some(res)
-            },
-        }
+        self.0.next(|remaining_part, byte_offset| {
+            let target_rank = must_have_or_bug(remaining_part.rank_zeros(byte_offset));
+            remaining_part.select_zeros(target_rank)
+        })
     }
 }
 
