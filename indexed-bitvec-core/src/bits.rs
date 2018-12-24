@@ -582,12 +582,14 @@ mod tests {
     }
 
     quickcheck! {
-        fn fuzz_test_iter_positions(bits: Bits<Box<[u8]>>) -> () {
+        fn fuzz_test_iter(bits: Bits<Box<[u8]>>) -> () {
+            let as_bools: Vec<bool> =
+                (0..bits.used_bits()).map(|idx| bits.get(idx).unwrap()).collect();
             let ones_locs: Vec<u64> =
                 (0..bits.used_bits()).filter(|&idx| bits.get(idx).unwrap()).collect();
             let zeros_locs: Vec<u64> =
                 (0..bits.used_bits()).filter(|&idx| !(bits.get(idx).unwrap())).collect();
-
+            assert_eq!(as_bools, bits.iter().collect::<Vec<_>>());
             assert_eq!(ones_locs, bits.iter_set_bits().collect::<Vec<_>>());
             assert_eq!(zeros_locs, bits.iter_zero_bits().collect::<Vec<_>>());
         }
