@@ -232,22 +232,25 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 
 use core::cmp::{min, Ordering, Ord};
 
+fn must_have_or_bug<T>(opt: Option<T>) -> T {
+    opt.expect(
+        "If this is None there is a bug in Bits implementation")
+}
 
 fn cmp_bits(l: Bits<&[u8]>, r: Bits<&[u8]>) -> Ordering {
     let common_len = min(l.used_bits(), r.used_bits());
     let common_full_byte_len = (common_len / 8) as usize;
+
     let full_bytes_l = &(l.all_bytes())[..common_full_byte_len];
     let full_bytes_r = &(r.all_bytes())[..common_full_byte_len];
-    for (byte_l, byte_r) in full_bytes_l.iter().zip(full_bytes_r.iter()) {
-        match byte_l.cmp(byte_r) {
-            Ordering::Equal => (),
-            r => return r,
-        }
-    }
+    match full_bytes_l.cmp(full_bytes_r) {
+        Ordering::Equal => (),
+        r => return r,
+    };
 
     for idx in ((common_full_byte_len * 8) as u64)..common_len {
-        let l_bit = l.get(idx).expect("If we don't have this bit there is a bug in Bits implementation");
-        let r_bit = r.get(idx).expect("If we don't have this bit there is a bug in Bits implementation");
+        let l_bit = must_have_or_bug(l.get(idx));
+        let r_bit = must_have_or_bug(r.get(idx));
         match l_bit.cmp(&r_bit) {
             Ordering::Equal => (),
             r => return r,
@@ -287,6 +290,60 @@ impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSi
         (self.0).0.heap_size_of_children()
     }
 }
+
+#[derive(Debug)]
+struct BitIndexIterator<T: core::ops::Deref<Target = [u8]>> {
+    search_from: u64,
+    search_in: Bits<T>,
+}
+
+#[derive(Debug)]
+pub struct SetBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIndexIterator<T>);
+
+impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        let inner = &mut self.0;
+        if inner.search_from >= inner.search_in.used_bits() {
+            return None;
+        }
+
+        let byte_index = (inner.search_from / 8) as usize;
+        let byte_offset = inner.search_from % 8;
+
+        let byte_index_bits = (byte_index as u64) * 8;
+
+        let remaining_part =
+            must_have_or_bug(Bits::from(
+                &(inner.search_in.all_bytes())[byte_index..],
+                inner.search_in.used_bits() - byte_index_bits));
+
+        let target_rank = must_have_or_bug(remaining_part.rank_ones(byte_offset));
+        match remaining_part.select_ones(target_rank) {
+            None => {
+                inner.search_from = inner.search_in.used_bits();
+                None
+            },
+            Some(next_sub_idx) => {
+                let res = byte_index_bits + next_sub_idx;
+                inner.search_from = res + 1;
+                Some(res)
+            },
+        }
+    }
+}
+
+impl<T: core::ops::Deref<Target = [u8]>> Bits<T> {
+    pub fn into_iter_set_bits(self) -> SetBitIndexIterator<T> {
+        SetBitIndexIterator(BitIndexIterator { search_from: 0, search_in: self })
+    }
+
+    pub fn iter_set_bits(&self) -> SetBitIndexIterator<&[u8]> {
+        self.clone_ref().into_iter_set_bits()
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
