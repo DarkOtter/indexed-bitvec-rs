@@ -323,6 +323,7 @@ impl<T: core::ops::Deref<Target = [u8]>> BitIndexIterator<T> {
                 None
             },
             Some(next_sub_idx) => {
+                debug_assert!(next_sub_idx >= byte_offset);
                 let res = byte_index_bits + next_sub_idx;
                 self.search_from = res + 1;
                 Some(res)
@@ -339,6 +340,7 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
 
     fn next(&mut self) -> Option<u64> {
         self.0.next(|remaining_part, byte_offset| {
+            debug_assert!(byte_offset < 8);
             let target_rank = must_have_or_bug(remaining_part.rank_ones(byte_offset));
             remaining_part.select_ones(target_rank)
         })
@@ -353,6 +355,7 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for ZeroBitIndexIterator<T> {
 
     fn next(&mut self) -> Option<u64> {
         self.0.next(|remaining_part, byte_offset| {
+            debug_assert!(byte_offset < 8);
             let target_rank = must_have_or_bug(remaining_part.rank_zeros(byte_offset));
             remaining_part.select_zeros(target_rank)
         })
