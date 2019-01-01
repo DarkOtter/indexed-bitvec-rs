@@ -37,6 +37,19 @@ fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     }
 }
 
+pub(crate) fn set_unchecked(data: &mut [u8], idx_bits: u64, to: bool) {
+    let byte_idx = (idx_bits / 8) as usize;
+    let idx_in_byte = (idx_bits % 8) as usize;
+
+    let mask = 0x80 >> idx_in_byte;
+
+    if to {
+        data[byte_idx] |= mask
+    } else {
+        data[byte_idx] &= !mask
+    }
+}
+
 fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     use core::mem::{align_of, size_of};
 
@@ -194,6 +207,14 @@ mod tests {
     }
 
     quickcheck! {
+        fn test_set_unchecked(bools: Vec<bool>) -> bool {
+            let mut data = vec![0; (bools.len() + 7) / 8].into_boxed_slice();
+            bools.iter().cloned().enumerate().for_each(
+                |(idx, boolean)| set_unchecked(&mut data[..], idx as u64, boolean));
+            bools.iter().cloned().enumerate().all(
+                |(idx, boolean)| Some(boolean) == get(&data[..], idx as u64))
+        }
+
         fn test_count(data: Vec<u8>) -> bool {
             let mut expected_count_ones = 0u64;
             let mut expected_count_zeros = 0u64;
