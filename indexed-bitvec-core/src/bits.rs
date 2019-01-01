@@ -488,6 +488,54 @@ mod tests {
     }
 
     #[test]
+    fn test_set() {
+        let pattern_a = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+        let mut bits_a = Bits::from(pattern_a.into_boxed_slice(), 8 * 8).unwrap();
+        assert!(bits_a.set(12, true).is_ok());
+        assert!(bits_a.set(18, false).is_ok());
+        assert!(bits_a.set(8 * 8, true).is_err());
+        for i in 0..bits_a.used_bits() {
+            assert_eq!(
+                bits_a.get(i).unwrap(),
+                ((i / 8 == i % 8) || i == 12) && i != 18,
+                "Differed at position {}",
+                i
+            )
+        }
+    }
+
+    quickcheck! {
+        #[test]
+        fn fuzz_test_set(bits: Bits<Box<[u8]>>, idx: u64, to: bool) -> bool {
+            let original_bits = bits.clone();
+            let mut bits = bits;
+
+            if bits.used_bits() == 0 {
+                return bits.set(0, to).is_err();
+            }
+
+            let (idx_in_range, o_o_range_fine) =
+                if idx < bits.used_bits() {
+                    (idx, true)
+                } else {
+                    let works = bits.set(idx, to).is_err();
+                    (idx % bits.used_bits() , works)
+                };
+
+            let set_fine = Ok(()) == bits.set(idx_in_range, to);
+
+            o_o_range_fine
+                && set_fine
+                && (0..bits.used_bits()).all(
+                    |check_idx| if check_idx == idx_in_range {
+                        Some(to) == bits.get(check_idx)
+                    } else {
+                        original_bits.get(check_idx) == bits.get(check_idx)
+                    })
+        }
+    }
+
+    #[test]
     fn test_count() {
         let pattern_a = [0xff, 0xaau8];
         let bytes_a = &pattern_a[..];

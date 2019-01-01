@@ -207,6 +207,14 @@ mod tests {
     }
 
     quickcheck! {
+        fn test_set_unchecked(bools: Vec<bool>) -> bool {
+            let mut data = vec![0; (bools.len() + 7) / 8].into_boxed_slice();
+            bools.iter().cloned().enumerate().for_each(
+                |(idx, boolean)| set_unchecked(&mut data[..], idx as u64, boolean));
+            bools.iter().cloned().enumerate().all(
+                |(idx, boolean)| Some(boolean) == get(&data[..], idx as u64))
+        }
+
         fn test_count(data: Vec<u8>) -> bool {
             let mut expected_count_ones = 0u64;
             let mut expected_count_zeros = 0u64;
