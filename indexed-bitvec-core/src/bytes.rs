@@ -37,6 +37,19 @@ fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     }
 }
 
+pub(crate) fn set_unchecked(data: &mut [u8], idx_bits: u64, to: bool) {
+    let byte_idx = (idx_bits / 8) as usize;
+    let idx_in_byte = (idx_bits % 8) as usize;
+
+    let mask = 0x80 >> idx_in_byte;
+
+    if to {
+        data[byte_idx] |= mask
+    } else {
+        data[byte_idx] &= !mask
+    }
+}
+
 fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     use core::mem::{align_of, size_of};
 

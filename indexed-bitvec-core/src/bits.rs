@@ -230,6 +230,44 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     }
 }
 
+impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
+    #[inline]
+    pub fn all_bytes_mut(&mut self) -> &mut [u8] {
+        (self.0).0.deref_mut()
+    }
+
+    /// Set the byte at a specific index.
+    ///
+    /// Returns an error if the index is out of bounds.
+    ///
+    /// ```
+    /// use indexed_bitvec_core::bits::Bits;
+    /// let mut bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.get(0), Some(true));
+    /// assert_eq!(bits.get(7), Some(false));
+    /// assert_eq!(bits.get(14), Some(true));
+    /// assert_eq!(bits.get(15), None);
+    /// assert!(bits.set(0, false).is_ok());
+    /// assert_eq!(bits.get(0), Some(false));
+    /// assert!(bits.set(0, true).is_ok());
+    /// assert_eq!(bits.get(0), Some(true));
+    /// assert!(bits.set(7, false).is_ok());
+    /// assert_eq!(bits.get(7), Some(false));
+    /// assert!(bits.set(14, false).is_ok());
+    /// assert_eq!(bits.get(14), Some(false));
+    /// assert!(bits.set(15, false).is_err());
+    /// ```
+    pub fn set(&mut self, idx_bits: u64, to: bool) -> Result<(), &'static str> {
+        let used_bits = self.used_bits();
+        if idx_bits >= used_bits {
+            Err("Index out-of-bounds")
+        } else {
+            debug_assert!(big_enough(self.all_bytes_mut(), used_bits));
+            Ok(bytes::set_unchecked(self.all_bytes_mut(), idx_bits, to))
+        }
+    }
+}
+
 use core::cmp::{min, Ordering, Ord};
 
 fn must_have_or_bug<T>(opt: Option<T>) -> T {
