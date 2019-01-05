@@ -872,4 +872,13 @@ mod tests {
             assert_eq!(data.select_zeros(rank), select_zeros(&index, data, rank));
         }
     }
+
+    #[test]
+    fn test_succinct_trie_bitvec() {
+        let src_data = include_bytes!("../examples/strange-cases/succinct-trie.bin");
+        let (used_bits, data): (u64, Vec<u8>) = bincode::deserialize(src_data).unwrap();
+        let bitvec = Bits::from(data, used_bits).unwrap();
+        assert_eq!(1178631, bitvec.used_bits());
+        // TODO: Test indexing this bitvec
+    }
 }
