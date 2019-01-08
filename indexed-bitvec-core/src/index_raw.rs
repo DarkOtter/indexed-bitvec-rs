@@ -272,11 +272,12 @@ mod structure {
         data: Bits<&[u8]>,
         count_ones: u64,
     ) -> (&'a mut [SampleEntry], &'a mut [SampleEntry]) {
+        debug_assert!(index_after_l1l2.len() == size::sample_words(data.used_bits()));
         let all_samples = cast_to_samples_mut(index_after_l1l2);
         let n_samples_ones = size::samples_for_bits(count_ones);
         let n_samples_zeros = size::samples_for_bits(data.used_bits() - count_ones);
         debug_assert!(all_samples.len() >= n_samples_ones + n_samples_zeros);
-        debug_assert!(all_samples.len() <= n_samples_ones + n_samples_zeros + 1);
+        debug_assert!(all_samples.len() <= n_samples_ones + n_samples_zeros + 2);
         let (ones_samples, other_samples) = all_samples.split_at_mut(n_samples_ones);
         let zeros_samples = &mut other_samples[..n_samples_zeros];
         (ones_samples, zeros_samples)
@@ -875,10 +876,31 @@ mod tests {
 
     #[test]
     fn test_succinct_trie_bitvec() {
+        // This bitvec was found to break some things that had previously been
+        // believed to be invariants - specifically the amount of extra samples
+        // that might exist in the sampling index.
         let src_data = include_bytes!("../examples/strange-cases/succinct-trie.bin");
         let (used_bits, data): (u64, Vec<u8>) = bincode::deserialize(src_data).unwrap();
         let bitvec = Bits::from(data, used_bits).unwrap();
-        assert_eq!(1178631, bitvec.used_bits());
-        // TODO: Test indexing this bitvec
+        let bits = bitvec.clone_ref();
+        assert_eq!(1178631, bits.used_bits());
+        let mut index_data = vec![0u64; index_size_for(bits)];
+        build_index_for(bits, &mut index_data[..]).unwrap();
+
+
+        let mut running_rank_ones = 0u64;
+        let mut running_rank_zeros = 0u64;
+        for (idx, bit) in bits.iter().enumerate() {
+            let idx = idx as u64;
+            assert_eq!(Some(running_rank_ones), rank_ones(&index_data[..], bits, idx));
+            assert_eq!(Some(running_rank_zeros), rank_zeros(&index_data[..], bits, idx));
+            if bit {
+                assert_eq!(idx, select_ones(&index_data[..], bits, running_rank_ones).unwrap());
+                running_rank_ones += 1;
+            } else {
+                assert_eq!(idx, select_zeros(&index_data[..], bits, running_rank_zeros).unwrap());
+                running_rank_zeros += 1;
+            }
+        }
     }
 }
