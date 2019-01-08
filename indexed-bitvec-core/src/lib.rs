@@ -30,6 +30,9 @@ extern crate rand_xorshift;
 #[macro_use]
 extern crate quickcheck;
 
+#[cfg(test)]
+extern crate bincode;
+
 #[cfg(feature = "implement_heapsize")]
 extern crate heapsize;
 
