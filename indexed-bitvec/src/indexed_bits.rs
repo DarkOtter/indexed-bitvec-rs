@@ -19,7 +19,7 @@ use indexed_bitvec_core::bits::Bits;
 use indexed_bitvec_core::index_raw;
 
 /// Bits stored with extra index data for fast rank and select.
-#[derive(Clone, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct IndexedBits<T: Deref<Target = [u8]>> {
     index: Box<[u64]>,
     bits: Bits<T>,
@@ -107,9 +107,9 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
 }
 
 #[cfg(feature = "implement_heapsize")]
-impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf for IndexedBits<T> {
+impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf
+    for IndexedBits<T> {
     fn heap_size_of_children(&self) -> usize {
-        self.index.heap_size_of_children()
-            + self.bits.heap_size_of_children()
+        self.index.heap_size_of_children() + self.bits.heap_size_of_children()
     }
 }

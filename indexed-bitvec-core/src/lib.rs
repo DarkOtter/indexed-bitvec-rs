@@ -17,6 +17,10 @@
 //! fast rank & select operations on bitvectors.
 #![no_std]
 
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+
 #[cfg(test)]
 #[macro_use]
 extern crate std;
@@ -35,6 +39,7 @@ extern crate bincode;
 
 #[cfg(feature = "implement_heapsize")]
 extern crate heapsize;
+
 
 #[cold]
 fn ceil_div_slow(n: usize, d: usize) -> usize {
