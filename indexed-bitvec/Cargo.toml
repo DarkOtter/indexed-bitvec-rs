@@ -18,6 +18,10 @@ implement_heapsize = ["heapsize", "indexed_bitvec_core/implement_heapsize"]
 path = "../indexed-bitvec-core"
 version = "3"
 
+[dependencies]
+serde = { version = "1.0", default-features = false }
+serde_derive = { version = "1.0", default-features = false }
+
 [dependencies.heapsize]
 optional = true
 version = "0.4"

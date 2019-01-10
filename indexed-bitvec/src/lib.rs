@@ -16,6 +16,10 @@
 //! Operations to create indexes used to perform
 //! fast rank & select operations on bitvectors.
 
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+
 extern crate indexed_bitvec_core;
 
 #[cfg(feature = "implement_heapsize")]

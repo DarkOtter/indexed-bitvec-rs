@@ -20,7 +20,7 @@ use crate::ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
 use core::ops::Deref;
 
 /// Bits stored as a sequence of bytes (most significant bit first).
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
 
 fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
@@ -329,7 +329,7 @@ impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSi
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct BitIterator<T: core::ops::Deref<Target = [u8]>> {
     search_from: u64,
     search_in: Bits<T>,
@@ -384,7 +384,7 @@ impl<T: core::ops::Deref<Target = [u8]>> BitIterator<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SetBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIterator<T>);
 
 impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
@@ -399,7 +399,7 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ZeroBitIndexIterator<T: core::ops::Deref<Target = [u8]>>(BitIterator<T>);
 
 impl<T: core::ops::Deref<Target = [u8]>> Iterator for ZeroBitIndexIterator<T> {
