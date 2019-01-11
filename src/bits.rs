@@ -559,7 +559,6 @@ mod tests {
         assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
     }
 
-    // TODO: Test rank via count instead (make the bits smaller)
     fn test_rank_via_get(bits: Bits<Vec<u8>>, bit_to_rank: bool) -> Result<(), TestCaseError> {
         fn inner<F>(bits: Bits<Vec<u8>>, bit_to_rank: bool, f: F) -> Result<(), TestCaseError>
         where
