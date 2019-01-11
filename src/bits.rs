@@ -20,7 +20,6 @@ use std::ops::Deref;
 /// Bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
-// TODO: Change to having a bitsref type here and the bits type be in non-core
 // TODO: Have deserialisation check length
 
 impl<'a, T: Deref<Target = [u8]>> From<&'a Bits<T>> for BitsRef<'a> {
@@ -674,7 +673,6 @@ mod tests {
                     bit_to_select,
                     select_idx
                 );
-                // TODO: Finish
             }
 
             prop_assert_eq!(
