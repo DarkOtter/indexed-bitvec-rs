@@ -119,4 +119,33 @@ mod tests {
     use super::*;
 
     // TODO: Test index bits
+    #[test]
+    fn test_succinct_trie_bitvec() {
+        // This bitvec was found to break some things that had previously been
+        // believed to be invariants of the indexing - specifically the amount
+        // of extra samples that might exist in the sampling index.
+        let src_data = include_bytes!("../examples/strange-cases/succinct-trie.bin");
+        let (used_bits, data): (u64, Vec<u8>) = bincode::deserialize(src_data).unwrap();
+        let bitvec = Bits::from(data, used_bits).unwrap();
+        let bits = bitvec.clone_ref();
+        assert_eq!(1178631, bits.used_bits());
+        assert_eq!(589316, bits.count_ones());
+        assert_eq!(589315, bits.count_zeros());
+        let bits = IndexedBits::build_index(bits);
+
+        let mut running_rank_ones = 0u64;
+        let mut running_rank_zeros = 0u64;
+        for (idx, bit) in bits.bits().iter().enumerate() {
+            let idx = idx as u64;
+            assert_eq!(Some(running_rank_ones), bits.rank_ones(idx));
+            assert_eq!(Some(running_rank_zeros), bits.rank_zeros(idx));
+            if bit {
+                assert_eq!(idx, bits.select_ones(running_rank_ones).unwrap());
+                running_rank_ones += 1;
+            } else {
+                assert_eq!(idx, bits.select_zeros(running_rank_zeros).unwrap());
+                running_rank_zeros += 1;
+            }
+        }
+    }
 }

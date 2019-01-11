@@ -25,6 +25,9 @@ extern crate indexed_bitvec_core;
 #[cfg(feature = "implement_heapsize")]
 extern crate heapsize;
 
+#[cfg(test)]
+extern crate bincode;
+
 mod bits;
 pub use indexed_bitvec_core::bits::Bits;
 
