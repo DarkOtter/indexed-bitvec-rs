@@ -14,9 +14,9 @@
    limitations under the License.
 */
 //! A bitvector with an index to allow fast rank and select.
-use std::ops::{Deref, DerefMut};
 use indexed_bitvec_core::bits::Bits;
 use indexed_bitvec_core::index_raw;
+use std::ops::{Deref, DerefMut};
 
 /// Bits stored with extra index data for fast rank and select.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -108,7 +108,8 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
 
 #[cfg(feature = "implement_heapsize")]
 impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf
-    for IndexedBits<T> {
+    for IndexedBits<T>
+{
     fn heap_size_of_children(&self) -> usize {
         self.index.heap_size_of_children() + self.bits.heap_size_of_children()
     }
@@ -119,6 +120,8 @@ mod tests {
     use super::*;
 
     // TODO: Test index bits
+    // TODO: Test serialisation
+
     #[test]
     fn test_succinct_trie_bitvec() {
         // This bitvec was found to break some things that had previously been

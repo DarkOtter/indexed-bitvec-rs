@@ -88,4 +88,5 @@ mod tests {
     }
 
     // TODO: Retest bits
+    // TODO: Test serialisation
 }

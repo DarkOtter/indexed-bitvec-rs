@@ -16,12 +16,14 @@
 //! Type to represent bits, and basic count/rank/select functions for it.
 use super::ceil_div_u64;
 use crate::bytes;
-use crate::ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
+use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 use core::ops::Deref;
 
 /// Bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
+// TODO: Change to having a bitsref type here and the bits type be in non-core
+// TODO: Have deserialisation check length
 
 fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
     ceil_div_u64(used_bits, 8) <= bytes.len() as u64
@@ -142,9 +144,10 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         if idx >= self.used_bits() {
             None
         } else {
-            Some(bytes::rank_ones(self.all_bytes(), idx).expect(
-                "Internally called rank out-of-range",
-            ))
+            Some(
+                bytes::rank_ones(self.all_bytes(), idx)
+                    .expect("Internally called rank out-of-range"),
+            )
         }
     }
 
@@ -169,9 +172,8 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// ```
     #[inline]
     pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
-        self.rank_ones(idx).map(|rank_ones| {
-            ZeroBits::convert_count(rank_ones, idx)
-        })
+        self.rank_ones(idx)
+            .map(|rank_ones| ZeroBits::convert_count(rank_ones, idx))
     }
 
     pub(crate) fn select<W: OnesOrZeros>(&self, target_rank: u64) -> Option<u64> {
@@ -268,11 +270,10 @@ impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
     }
 }
 
-use core::cmp::{min, Ordering, Ord};
+use core::cmp::{min, Ord, Ordering};
 
 fn must_have_or_bug<T>(opt: Option<T>) -> T {
-    opt.expect(
-        "If this is None there is a bug in Bits implementation")
+    opt.expect("If this is None there is a bug in Bits implementation")
 }
 
 fn cmp_bits(l: Bits<&[u8]>, r: Bits<&[u8]>) -> Ordering {
@@ -298,7 +299,6 @@ fn cmp_bits(l: Bits<&[u8]>, r: Bits<&[u8]>) -> Ordering {
     l.used_bits().cmp(&r.used_bits())
 }
 
-
 impl<T: Deref<Target = [u8]>> core::cmp::Ord for Bits<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         cmp_bits(self.clone_ref(), other.clone_ref())
@@ -311,14 +311,11 @@ impl<T: Deref<Target = [u8]>> core::cmp::PartialOrd for Bits<T> {
     }
 }
 
-impl<T: Deref<Target = [u8]>> core::cmp::Eq for Bits<T> {
-
-}
+impl<T: Deref<Target = [u8]>> core::cmp::Eq for Bits<T> {}
 
 impl<T: Deref<Target = [u8]>> core::cmp::PartialEq for Bits<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.used_bits() == other.used_bits()
-            && self.cmp(other) == Ordering::Equal
+        self.used_bits() == other.used_bits() && self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -344,14 +341,15 @@ impl<T: core::ops::Deref<Target = [u8]>> Iterator for BitIterator<T> {
             ret => {
                 self.search_from += 1;
                 ret
-            },
+            }
         }
     }
 }
 
 impl<T: core::ops::Deref<Target = [u8]>> BitIterator<T> {
     fn next_index<F>(&mut self, with_remaining: F) -> Option<u64>
-        where F: Fn(Bits<&[u8]>, u64) -> Option<u64>
+    where
+        F: Fn(Bits<&[u8]>, u64) -> Option<u64>,
     {
         if self.search_from >= self.search_in.used_bits() {
             return None;
@@ -362,10 +360,10 @@ impl<T: core::ops::Deref<Target = [u8]>> BitIterator<T> {
 
         let byte_index_bits = (byte_index as u64) * 8;
 
-        let remaining_part =
-            must_have_or_bug(Bits::from(
-                &(self.search_in.all_bytes())[byte_index..],
-                self.search_in.used_bits() - byte_index_bits));
+        let remaining_part = must_have_or_bug(Bits::from(
+            &(self.search_in.all_bytes())[byte_index..],
+            self.search_in.used_bits() - byte_index_bits,
+        ));
 
         let next_rank = with_remaining(remaining_part, byte_offset);
 
@@ -373,13 +371,13 @@ impl<T: core::ops::Deref<Target = [u8]>> BitIterator<T> {
             None => {
                 self.search_from = self.search_in.used_bits();
                 None
-            },
+            }
             Some(next_sub_idx) => {
                 debug_assert!(next_sub_idx >= byte_offset);
                 let res = byte_index_bits + next_sub_idx;
                 self.search_from = res + 1;
                 Some(res)
-            },
+            }
         }
     }
 }
@@ -419,7 +417,10 @@ impl<T: core::ops::Deref<Target = [u8]>> IntoIterator for Bits<T> {
     type IntoIter = BitIterator<T>;
 
     fn into_iter(self) -> BitIterator<T> {
-        BitIterator { search_from: 0, search_in: self }
+        BitIterator {
+            search_from: 0,
+            search_in: self,
+        }
     }
 }
 
@@ -445,13 +446,12 @@ impl<T: core::ops::Deref<Target = [u8]>> Bits<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck::Arbitrary;
     use std::boxed::Box;
     use std::vec::Vec;
-    use quickcheck::Arbitrary;
 
     impl Arbitrary for Bits<Box<[u8]>> {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
@@ -609,7 +609,6 @@ mod tests {
         }
     }
 
-    
     impl<T: Deref<Target = [u8]>> Bits<T> {
         fn to_bool_vec_slow(&self) -> Vec<bool> {
             (0..self.used_bits())
@@ -629,9 +628,7 @@ mod tests {
 
     #[test]
     fn test_eq_cmp() {
-        fn check (expected: Ordering,
-                  l: Option<Bits<Vec<u8>>>,
-                  r: Option<Bits<Vec<u8>>>) {
+        fn check(expected: Ordering, l: Option<Bits<Vec<u8>>>, r: Option<Bits<Vec<u8>>>) {
             let l = l.unwrap();
             let r = r.unwrap();
             let expected_eq = match expected {
@@ -643,28 +640,42 @@ mod tests {
         }
 
         // Should ignore extra bits
-        check(Ordering::Equal,
-              Bits::from(vec![0xff, 0xf0], 12),
-              Bits::from(vec![0xff, 0xff], 12));
+        check(
+            Ordering::Equal,
+            Bits::from(vec![0xff, 0xf0], 12),
+            Bits::from(vec![0xff, 0xff], 12),
+        );
 
-        check(Ordering::Equal,
-              Bits::from(vec![], 0),
-              Bits::from(vec![], 0));
-        check(Ordering::Less,
-              Bits::from(vec![0xff], 0),
-              Bits::from(vec![0xff], 1));
-        check(Ordering::Greater,
-              Bits::from(vec![0xff], 1),
-              Bits::from(vec![0xff], 0));
-        check(Ordering::Equal,
-              Bits::from(vec![0xff], 1),
-              Bits::from(vec![0xff], 1));
-        check(Ordering::Less,
-              Bits::from(vec![0x00], 1),
-              Bits::from(vec![0xff], 1));
-        check(Ordering::Greater,
-              Bits::from(vec![0xff], 1),
-              Bits::from(vec![0x00], 1));
+        check(
+            Ordering::Equal,
+            Bits::from(vec![], 0),
+            Bits::from(vec![], 0),
+        );
+        check(
+            Ordering::Less,
+            Bits::from(vec![0xff], 0),
+            Bits::from(vec![0xff], 1),
+        );
+        check(
+            Ordering::Greater,
+            Bits::from(vec![0xff], 1),
+            Bits::from(vec![0xff], 0),
+        );
+        check(
+            Ordering::Equal,
+            Bits::from(vec![0xff], 1),
+            Bits::from(vec![0xff], 1),
+        );
+        check(
+            Ordering::Less,
+            Bits::from(vec![0x00], 1),
+            Bits::from(vec![0xff], 1),
+        );
+        check(
+            Ordering::Greater,
+            Bits::from(vec![0xff], 1),
+            Bits::from(vec![0x00], 1),
+        );
     }
 
     quickcheck! {
