@@ -134,8 +134,7 @@ mod tests {
         // believed to be invariants of the indexing - specifically the amount
         // of extra samples that might exist in the sampling index.
         let src_data = include_bytes!("../examples/strange-cases/succinct-trie.bin");
-        let (used_bits, data): (u64, Vec<u8>) = bincode::deserialize(src_data).unwrap();
-        let bitvec = Bits::from_bytes(data, used_bits).unwrap();
+        let bitvec: Bits<Vec<u8>> = bincode::deserialize(src_data).unwrap();
         let bits = bitvec.clone_ref();
         assert_eq!(1178631, bits.used_bits());
         assert_eq!(589316, bits.count_ones());
