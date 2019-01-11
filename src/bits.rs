@@ -337,5 +337,12 @@ mod tests {
         }
     }
 
-    // TODO: Test serialisation
+    proptest! {
+        #[test]
+        fn test_serialise_roundtrip(original in gen_bits(0..=1024)) {
+            let serialised = bincode::serialize(&original).unwrap();
+            let deserialised = bincode::deserialize(&serialised).unwrap();
+            prop_assert_eq!(original, deserialised);
+        }
+    }
 }
