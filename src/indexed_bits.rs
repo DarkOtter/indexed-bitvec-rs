@@ -113,3 +113,10 @@ impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSi
         self.index.heap_size_of_children() + self.bits.heap_size_of_children()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // TODO: Test index bits
+}
