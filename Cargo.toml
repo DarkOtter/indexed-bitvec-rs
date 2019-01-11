@@ -10,17 +10,18 @@ authors = ["DarkOtter <>"]
 keywords = ["index", "indexing", "bits", "bitvector"]
 categories = ["algorithms", "data-structures"]
 
+[badges]
+travis-ci = { repository = "DarkOtter/indexed-bitvec-rs" }
+
 [workspace]
-members = [
-"indexed-bitvec-core",
-]
+members = [ "core" ]
 
 [features]
 default = []
 implement_heapsize = ["heapsize", "indexed_bitvec_core/implement_heapsize"]
 
 [dependencies.indexed_bitvec_core]
-path = "indexed-bitvec-core"
+path = "core"
 version = "3"
 
 [dependencies]
