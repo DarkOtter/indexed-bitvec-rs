@@ -37,7 +37,6 @@ extern crate quickcheck;
 #[cfg(feature = "implement_heapsize")]
 extern crate heapsize;
 
-
 #[cold]
 fn ceil_div_slow(n: usize, d: usize) -> usize {
     n / d + (if n % d > 0 { 1 } else { 0 })
@@ -75,6 +74,7 @@ mod word;
 mod bytes;
 
 pub mod bits;
+pub mod bits_ref;
 
 mod with_offset;
 

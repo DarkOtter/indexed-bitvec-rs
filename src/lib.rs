@@ -36,3 +36,20 @@ pub use indexed_bitvec_core::bits::Bits;
 
 mod indexed_bits;
 pub use crate::indexed_bits::IndexedBits;
+
+#[cold]
+fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
+    n / d + (if n % d > 0 { 1 } else { 0 })
+}
+
+#[allow(dead_code)]
+#[inline(always)]
+pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
+    let nb = n.wrapping_add(d - 1);
+    if nb < n {
+        return ceil_div_u64_slow(n, d);
+    };
+    nb / d
+}
+
+// TODO: Test ceil_div
