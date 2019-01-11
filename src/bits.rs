@@ -65,7 +65,7 @@ mod tests {
     prop_compose! {
         fn gen_bits(byte_len: impl Into<SizeRange>)
             (data in gen_vec(any::<u8>(), byte_len))
-            (used_bits in 0..((data.len() as u64) * 8),
+            (used_bits in 0..=((data.len() as u64) * 8),
              data in Just(data))
             -> Bits<Vec<u8>>
         {
@@ -75,12 +75,13 @@ mod tests {
 
     proptest! {
         #[test]
-        fn test_all_bytes(bits in gen_bits(0..1000)) {
+        fn test_all_bytes(bits in gen_bits(0..=1024)) {
             let clone_of_data = bits.clone().decompose().0;
             prop_assert_eq!(&clone_of_data[..], bits.all_bytes());
         }
 
-        fn test_bytes(bits in gen_bits(0..1000)) {
+        #[test]
+        fn test_bytes(bits in gen_bits(0..=1024)) {
             let need_bytes = ((bits.used_bits() + 7) / 8) as usize;
             prop_assert_eq!(&bits.all_bytes()[..need_bytes], bits.bytes());
         }
