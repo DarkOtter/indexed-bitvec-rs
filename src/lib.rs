@@ -27,12 +27,15 @@ extern crate heapsize;
 
 #[cfg(test)]
 #[macro_use]
+extern crate quickcheck;
+#[cfg(test)]
+#[macro_use]
 extern crate proptest;
 #[cfg(test)]
 extern crate bincode;
 
-mod bits;
-pub use indexed_bitvec_core::bits::Bits;
+pub mod bits;
+pub use crate::bits::Bits;
 
 mod indexed_bits;
 pub use crate::indexed_bits::IndexedBits;

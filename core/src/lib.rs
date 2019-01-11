@@ -73,7 +73,6 @@ mod word;
 
 mod bytes;
 
-pub mod bits;
 pub mod bits_ref;
 
 mod with_offset;

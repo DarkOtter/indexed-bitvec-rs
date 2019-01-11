@@ -14,7 +14,8 @@
    limitations under the License.
 */
 //! A bitvector with an index to allow fast rank and select.
-use indexed_bitvec_core::bits::Bits;
+use crate::bits::Bits;
+use indexed_bitvec_core::bits_ref::BitsRef;
 use indexed_bitvec_core::index_raw;
 use std::ops::{Deref, DerefMut};
 
@@ -32,10 +33,10 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// all of the data input.
     pub fn build_index(bits: Bits<T>) -> Self {
         let index = {
-            let bits_as_u8 = bits.clone_ref();
-            let index = vec![0u64; index_raw::index_size_for(bits_as_u8)];
+            let bits_ref = BitsRef::from(&bits);
+            let index = vec![0u64; index_raw::index_size_for(bits_ref)];
             let mut index = index.into_boxed_slice();
-            index_raw::build_index_for(bits_as_u8, index.deref_mut())
+            index_raw::build_index_for(bits_ref, index.deref_mut())
                 .expect("Specifically made index of the right size");
             index
         };
@@ -51,6 +52,11 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
         self.bits.clone_ref()
     }
 
+    #[inline]
+    pub fn bits_ref(&self) -> BitsRef {
+        BitsRef::from(&self.bits)
+    }
+
     /// Discard the index and get the original bit sequence storage back.
     #[inline]
     pub fn decompose(self) -> Bits<T> {
@@ -60,13 +66,13 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Count the set bits (fast *O(1)*).
     #[inline]
     pub fn count_ones(&self) -> u64 {
-        index_raw::count_ones(self.index(), self.bits())
+        index_raw::count_ones(self.index(), self.bits_ref())
     }
 
     /// Count the unset bits (fast *O(1)*).
     #[inline]
     pub fn count_zeros(&self) -> u64 {
-        index_raw::count_zeros(self.index(), self.bits())
+        index_raw::count_zeros(self.index(), self.bits_ref())
     }
 
     /// Count the set bits before a position in the bits (*O(1)*).
@@ -74,7 +80,7 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Returns `None` it the index is out of bounds.
     #[inline]
     pub fn rank_ones(&self, idx: u64) -> Option<u64> {
-        index_raw::rank_ones(self.index(), self.bits(), idx)
+        index_raw::rank_ones(self.index(), self.bits_ref(), idx)
     }
 
     /// Count the unset bits before a position in the bits (*O(1)*).
@@ -82,7 +88,7 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Returns `None` it the index is out of bounds.
     #[inline]
     pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
-        index_raw::rank_zeros(self.index(), self.bits(), idx)
+        index_raw::rank_zeros(self.index(), self.bits_ref(), idx)
     }
 
     /// Find the position of a set bit by its rank (*O(log n)*).
@@ -92,7 +98,7 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// and `get(result) == Some(true)`.
     #[inline]
     pub fn select_ones(&self, target_rank: u64) -> Option<u64> {
-        index_raw::select_ones(self.index(), self.bits(), target_rank)
+        index_raw::select_ones(self.index(), self.bits_ref(), target_rank)
     }
 
     /// Find the position of an unset bit by its rank (*O(log n)*).
@@ -102,7 +108,7 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// and `get(result) == Some(false)`.
     #[inline]
     pub fn select_zeros(&self, target_rank: u64) -> Option<u64> {
-        index_raw::select_zeros(self.index(), self.bits(), target_rank)
+        index_raw::select_zeros(self.index(), self.bits_ref(), target_rank)
     }
 }
 
@@ -129,7 +135,7 @@ mod tests {
         // of extra samples that might exist in the sampling index.
         let src_data = include_bytes!("../examples/strange-cases/succinct-trie.bin");
         let (used_bits, data): (u64, Vec<u8>) = bincode::deserialize(src_data).unwrap();
-        let bitvec = Bits::from(data, used_bits).unwrap();
+        let bitvec = Bits::from_bytes(data, used_bits).unwrap();
         let bits = bitvec.clone_ref();
         assert_eq!(1178631, bits.used_bits());
         assert_eq!(589316, bits.count_ones());

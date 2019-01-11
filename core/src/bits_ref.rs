@@ -19,7 +19,7 @@ use crate::bytes;
 use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 
 /// Bits stored as a sequence of bytes (most significant bit first).
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct BitsRef<'a>((&'a [u8], u64));
 
 fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
@@ -27,9 +27,9 @@ fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
 }
 
 impl<'a> BitsRef<'a> {
-    pub fn from(bytes: &'a [u8], used_bits: u64) -> Option<Self> {
+    pub fn from_bytes(bytes: &'a [u8], used_bits: u64) -> Option<Self> {
         if big_enough(bytes, used_bits) {
-            Some(BitsRef(bytes, used_bits))
+            Some(BitsRef((bytes, used_bits)))
         } else {
             None
         }
@@ -58,7 +58,7 @@ impl<'a> BitsRef<'a> {
         &all_bytes[..ceil_div_u64(self.used_bits(), 8) as usize]
     }
 
-    /// Deconstruct the bits storage to get back what it was constructed from.
+    /// Get back the separate reference and used bits.
     #[inline]
     pub fn decompose(self) -> (&'a [u8], u64) {
         self.0
@@ -67,15 +67,6 @@ impl<'a> BitsRef<'a> {
     /// Get the byte at a specific index.
     ///
     /// Returns `None` for out-of-bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.get(0), Some(true));
-    /// assert_eq!(bits.get(7), Some(false));
-    /// assert_eq!(bits.get(14), Some(true));
-    /// assert_eq!(bits.get(15), None);
-    /// ```
     #[inline]
     pub fn get(self, idx_bits: u64) -> Option<bool> {
         if idx_bits >= self.used_bits() {
@@ -87,14 +78,6 @@ impl<'a> BitsRef<'a> {
     }
 
     /// Count the set bits (*O(n)*).
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.count_ones(), 14);
-    /// assert_eq!(bits.count_zeros(), 1);
-    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
-    /// ```
     pub fn count_ones(self) -> u64 {
         if (self.used_bits() % 8) != 0 {
             bytes::rank_ones(self.all_bytes(), self.used_bits())
@@ -105,14 +88,6 @@ impl<'a> BitsRef<'a> {
     }
 
     /// Count the unset bits (*O(n)*).
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.count_ones(), 14);
-    /// assert_eq!(bits.count_zeros(), 1);
-    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
-    /// ```
     #[inline]
     pub fn count_zeros(self) -> u64 {
         ZeroBits::convert_count(self.count_ones(), self.used_bits())
@@ -121,22 +96,6 @@ impl<'a> BitsRef<'a> {
     /// Count the set bits before a position in the bits (*O(n)*).
     ///
     /// Returns `None` it the index is out of bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert!((0..bits.used_bits()).all(|idx|
-    ///     bits.rank_ones(idx).unwrap()
-    ///     + bits.rank_zeros(idx).unwrap()
-    ///     == (idx as u64)));
-    /// assert_eq!(bits.rank_ones(7), Some(7));
-    /// assert_eq!(bits.rank_zeros(7), Some(0));
-    /// assert_eq!(bits.rank_ones(8), Some(7));
-    /// assert_eq!(bits.rank_zeros(8), Some(1));
-    /// assert_eq!(bits.rank_ones(9), Some(8));
-    /// assert_eq!(bits.rank_zeros(9), Some(1));
-    /// assert_eq!(bits.rank_ones(15), None);
-    /// ```
     pub fn rank_ones(self, idx: u64) -> Option<u64> {
         if idx >= self.used_bits() {
             None
@@ -151,22 +110,6 @@ impl<'a> BitsRef<'a> {
     /// Count the unset bits before a position in the bits (*O(n)*).
     ///
     /// Returns `None` it the index is out of bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert!((0..bits.used_bits()).all(|idx|
-    ///     bits.rank_ones(idx).unwrap()
-    ///     + bits.rank_zeros(idx).unwrap()
-    ///     == (idx as u64)));
-    /// assert_eq!(bits.rank_ones(7), Some(7));
-    /// assert_eq!(bits.rank_zeros(7), Some(0));
-    /// assert_eq!(bits.rank_ones(8), Some(7));
-    /// assert_eq!(bits.rank_zeros(8), Some(1));
-    /// assert_eq!(bits.rank_ones(9), Some(8));
-    /// assert_eq!(bits.rank_zeros(9), Some(1));
-    /// assert_eq!(bits.rank_ones(15), None);
-    /// ```
     #[inline]
     pub fn rank_zeros(self, idx: u64) -> Option<u64> {
         self.rank_ones(idx)
@@ -192,15 +135,6 @@ impl<'a> BitsRef<'a> {
     /// Returns `None` if no suitable bit is found. It is
     /// always the case otherwise that `rank_ones(result) == Some(target_rank)`
     /// and `get(result) == Some(true)`.
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.select_ones(6), Some(6));
-    /// assert_eq!(bits.select_ones(7), Some(8));
-    /// assert_eq!(bits.select_zeros(0), Some(7));
-    /// assert_eq!(bits.select_zeros(1), None);
-    /// ```
     pub fn select_ones(self, target_rank: u64) -> Option<u64> {
         self.select::<OneBits>(target_rank)
     }
@@ -210,15 +144,6 @@ impl<'a> BitsRef<'a> {
     /// Returns `None` if no suitable bit is found. It is
     /// always the case otherwise that `rank_zeros(result) == Some(target_rank)`
     /// and `get(result) == Some(false)`.
-    ///
-    /// ```
-    /// use indexed_bitvec_core::bits::Bits;
-    /// let bits = Bits::from(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.select_ones(6), Some(6));
-    /// assert_eq!(bits.select_ones(7), Some(8));
-    /// assert_eq!(bits.select_zeros(0), Some(7));
-    /// assert_eq!(bits.select_zeros(1), None);
-    /// ```
     pub fn select_zeros(self, target_rank: u64) -> Option<u64> {
         self.select::<ZeroBits>(target_rank)
     }
@@ -276,16 +201,23 @@ mod tests {
     use std::boxed::Box;
     use std::vec::Vec;
 
-    fn from_or_panic<'a, T: std::ops::Deref<[u8]>>(bytes: &'a T, used_bits: u64) -> BitsRef<'a> {
-        BitsRef::from(bytes.deref(), used_bits).expect("Tried to make an invalid BitsRef in tests")
+    fn from_or_panic<'a, T: ?Sized + std::ops::Deref<Target = [u8]>>(
+        bytes: &'a T,
+        used_bits: u64,
+    ) -> BitsRef<'a> {
+        BitsRef::from_bytes(bytes.deref(), used_bits)
+            .expect("Tried to make an invalid BitsRef in tests")
     }
 
     mod gen_bits {
+        use super::*;
+
+        #[derive(Clone, Debug)]
         pub struct GenBits(Box<[u8]>, u64);
 
         impl GenBits {
-            fn as_ref<'a>(&'a self) -> BitsRef<'a> {
-                from_or_panic(self.0, self.1)
+            pub fn as_ref<'a>(&'a self) -> BitsRef<'a> {
+                from_or_panic(&self.0, self.1)
             }
         }
 
@@ -299,12 +231,12 @@ mod tests {
             }
         }
     }
-    use self::gen_bits::*;
+    pub use self::gen_bits::GenBits;
 
     #[test]
     fn test_get() {
-        let pattern_a = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
-        let bits_a = from_or_panic(&pattern_a[..], 8 * 8);
+        let pattern_a = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+        let bits_a = from_or_panic(&pattern_a, 8 * 8);
         for i in 0..bits_a.used_bits() {
             assert_eq!(
                 bits_a.get(i).unwrap(),
@@ -314,8 +246,8 @@ mod tests {
             )
         }
 
-        let pattern_b = [0xff, 0xc0];
-        let bits_b = from_or_panic(&pattern_b[..], 10);
+        let pattern_b = vec![0xff, 0xc0];
+        let bits_b = from_or_panic(&pattern_b, 10);
         for i in 0..10 {
             assert_eq!(bits_b.get(i), Some(true), "Differed at position {}", i)
         }
@@ -355,9 +287,8 @@ mod tests {
 
     #[test]
     fn test_rank() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| from_or_panic(bytes_a, len);
+        let pattern_a = vec![0xff, 0xaau8];
+        let make = |len: u64| from_or_panic(&pattern_a, len);
         let bits_a = make(16);
         for i in 0..15 {
             assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
@@ -429,9 +360,7 @@ mod tests {
 
     #[test]
     fn test_eq_cmp() {
-        fn check(expected: Ordering, l: Option<Bits<Vec<u8>>>, r: Option<Bits<Vec<u8>>>) {
-            let l = l.unwrap();
-            let r = r.unwrap();
+        fn check<'a>(expected: Ordering, l: BitsRef<'a>, r: BitsRef<'a>) {
             let expected_eq = match expected {
                 Ordering::Equal => true,
                 _ => false,
@@ -443,53 +372,42 @@ mod tests {
         // Should ignore extra bits
         check(
             Ordering::Equal,
-            Bits::from(vec![0xff, 0xf0], 12),
-            Bits::from(vec![0xff, 0xff], 12),
+            from_or_panic(&vec![0xff, 0xf0], 12),
+            from_or_panic(&vec![0xff, 0xff], 12),
         );
 
         check(
             Ordering::Equal,
-            Bits::from(vec![], 0),
-            Bits::from(vec![], 0),
+            from_or_panic(&vec![], 0),
+            from_or_panic(&vec![], 0),
         );
         check(
             Ordering::Less,
-            Bits::from(vec![0xff], 0),
-            Bits::from(vec![0xff], 1),
+            from_or_panic(&vec![0xff], 0),
+            from_or_panic(&vec![0xff], 1),
         );
         check(
             Ordering::Greater,
-            Bits::from(vec![0xff], 1),
-            Bits::from(vec![0xff], 0),
+            from_or_panic(&vec![0xff], 1),
+            from_or_panic(&vec![0xff], 0),
         );
         check(
             Ordering::Equal,
-            Bits::from(vec![0xff], 1),
-            Bits::from(vec![0xff], 1),
+            from_or_panic(&vec![0xff], 1),
+            from_or_panic(&vec![0xff], 1),
         );
         check(
             Ordering::Less,
-            Bits::from(vec![0x00], 1),
-            Bits::from(vec![0xff], 1),
+            from_or_panic(&vec![0x00], 1),
+            from_or_panic(&vec![0xff], 1),
         );
         check(
             Ordering::Greater,
-            Bits::from(vec![0xff], 1),
-            Bits::from(vec![0x00], 1),
+            from_or_panic(&vec![0xff], 1),
+            from_or_panic(&vec![0x00], 1),
         );
-    }
-
-    quickcheck! {
-        fn fuzz_test_iter(bits: Bits<Box<[u8]>>) -> () {
-            let as_bools: Vec<bool> =
-                (0..bits.used_bits()).map(|idx| bits.get(idx).unwrap()).collect();
-            let ones_locs: Vec<u64> =
-                (0..bits.used_bits()).filter(|&idx| bits.get(idx).unwrap()).collect();
-            let zeros_locs: Vec<u64> =
-                (0..bits.used_bits()).filter(|&idx| !(bits.get(idx).unwrap())).collect();
-            assert_eq!(as_bools, bits.iter().collect::<Vec<_>>());
-            assert_eq!(ones_locs, bits.iter_set_bits().collect::<Vec<_>>());
-            assert_eq!(zeros_locs, bits.iter_zero_bits().collect::<Vec<_>>());
-        }
     }
 }
+
+#[cfg(test)]
+pub use self::tests::GenBits;
