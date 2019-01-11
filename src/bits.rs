@@ -14,7 +14,6 @@
    limitations under the License.
 */
 //! Type to represent bits, and basic count/rank/select functions for it.
-use super::ceil_div_u64;
 use indexed_bitvec_core::bits_ref::BitsRef;
 use std::ops::Deref;
 
@@ -23,10 +22,6 @@ use std::ops::Deref;
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
 // TODO: Change to having a bitsref type here and the bits type be in non-core
 // TODO: Have deserialisation check length
-
-fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
-    ceil_div_u64(used_bits, 8) <= bytes.len() as u64
-}
 
 impl<'a, T: Deref<Target = [u8]>> From<&'a Bits<T>> for BitsRef<'a> {
     fn from(bits: &'a Bits<T>) -> Self {
@@ -234,7 +229,6 @@ impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
         if idx_bits >= used_bits {
             Err("Index out-of-bounds")
         } else {
-            debug_assert!(big_enough(self.all_bytes_mut(), used_bits));
             let data = self.all_bytes_mut();
             let byte_idx = (idx_bits / 8) as usize;
             let idx_in_byte = (idx_bits % 8) as usize;
@@ -408,253 +402,6 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck::Arbitrary;
-    use std::boxed::Box;
-    use std::vec::Vec;
-
-    impl Arbitrary for Bits<Box<[u8]>> {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
-            use rand::Rng;
-            let data = <Vec<u8>>::arbitrary(g);
-            let all_bits = data.len() as u64 * 8;
-            let overflow = g.gen_range(0, 64);
-            Self::from_bytes(data.into_boxed_slice(), all_bits.saturating_sub(overflow))
-                .expect("Generated bits must be valid")
-        }
-    }
-
-    #[test]
-    fn test_get() {
-        let pattern_a = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
-        let bits_a = Bits::from_bytes(&pattern_a[..], 8 * 8).unwrap();
-        for i in 0..bits_a.used_bits() {
-            assert_eq!(
-                bits_a.get(i).unwrap(),
-                i / 8 == i % 8,
-                "Differed at position {}",
-                i
-            )
-        }
-
-        let pattern_b = [0xff, 0xc0];
-        let bits_b = Bits::from_bytes(&pattern_b[..], 10).unwrap();
-        for i in 0..10 {
-            assert_eq!(bits_b.get(i), Some(true), "Differed at position {}", i)
-        }
-        for i in 10..16 {
-            assert_eq!(bits_b.get(i), None, "Differed at position {}", i)
-        }
-    }
-
-    #[test]
-    fn test_set() {
-        let pattern_a = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
-        let mut bits_a = Bits::from_bytes(pattern_a.into_boxed_slice(), 8 * 8).unwrap();
-        assert!(bits_a.set(12, true).is_ok());
-        assert!(bits_a.set(18, false).is_ok());
-        assert!(bits_a.set(8 * 8, true).is_err());
-        for i in 0..bits_a.used_bits() {
-            assert_eq!(
-                bits_a.get(i).unwrap(),
-                ((i / 8 == i % 8) || i == 12) && i != 18,
-                "Differed at position {}",
-                i
-            )
-        }
-    }
-
-    quickcheck! {
-        #[test]
-        fn fuzz_test_set(bits: Bits<Box<[u8]>>, idx: u64, to: bool) -> bool {
-            let original_bits = bits.clone();
-            let mut bits = bits;
-
-            if bits.used_bits() == 0 {
-                return bits.set(0, to).is_err();
-            }
-
-            let (idx_in_range, o_o_range_fine) =
-                if idx < bits.used_bits() {
-                    (idx, true)
-                } else {
-                    let works = bits.set(idx, to).is_err();
-                    (idx % bits.used_bits() , works)
-                };
-
-            let set_fine = Ok(()) == bits.set(idx_in_range, to);
-
-            o_o_range_fine
-                && set_fine
-                && (0..bits.used_bits()).all(
-                    |check_idx| if check_idx == idx_in_range {
-                        Some(to) == bits.get(check_idx)
-                    } else {
-                        original_bits.get(check_idx) == bits.get(check_idx)
-                    })
-        }
-    }
-
-    #[test]
-    fn test_count() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| Bits::from_bytes(bytes_a, len).expect("valid");
-        assert_eq!(12, make(16).count_ones());
-        assert_eq!(4, make(16).count_zeros());
-        assert_eq!(12, make(15).count_ones());
-        assert_eq!(3, make(15).count_zeros());
-        assert_eq!(11, make(14).count_ones());
-        assert_eq!(3, make(14).count_zeros());
-        assert_eq!(11, make(13).count_ones());
-        assert_eq!(2, make(13).count_zeros());
-        assert_eq!(10, make(12).count_ones());
-        assert_eq!(2, make(12).count_zeros());
-        assert_eq!(10, make(11).count_ones());
-        assert_eq!(1, make(11).count_zeros());
-        assert_eq!(9, make(10).count_ones());
-        assert_eq!(1, make(10).count_zeros());
-        assert_eq!(9, make(9).count_ones());
-        assert_eq!(0, make(9).count_zeros());
-        assert_eq!(8, make(8).count_ones());
-        assert_eq!(0, make(8).count_zeros());
-        assert_eq!(7, make(7).count_ones());
-        assert_eq!(0, make(7).count_zeros());
-        assert_eq!(0, make(0).count_ones());
-        assert_eq!(0, make(0).count_zeros());
-    }
-
-    #[test]
-    fn test_rank() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| Bits::from_bytes(bytes_a, len).expect("valid");
-        let bits_a = make(16);
-        for i in 0..15 {
-            assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
-            assert_eq!(Some(make(i).count_zeros()), bits_a.rank_zeros(i));
-        }
-        assert_eq!(None, bits_a.rank_ones(16));
-        assert_eq!(None, bits_a.rank_zeros(16));
-        assert_eq!(None, make(13).rank_ones(13));
-        assert_eq!(None, make(13).rank_zeros(13));
-        assert_eq!(bits_a.rank_ones(12), make(13).rank_ones(12));
-        assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
-    }
-
-    #[test]
-    fn test_select() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| Bits::from_bytes(bytes_a, len).expect("valid");
-        assert_eq!(Some(14), make(16).select_ones(11));
-        assert_eq!(None, make(14).select_ones(11));
-    }
-
-    quickcheck! {
-        fn fuzz_test(bits: Bits<Box<[u8]>>) -> () {
-            let mut running_rank_ones = 0;
-            let mut running_rank_zeros = 0;
-            for idx in 0..bits.used_bits() {
-                assert_eq!(Some(running_rank_ones), bits.rank_ones(idx));
-                assert_eq!(Some(running_rank_zeros), bits.rank_zeros(idx));
-                if bits.get(idx).unwrap() {
-                    assert_eq!(Some(idx), bits.select_ones(running_rank_ones));
-                    running_rank_ones += 1;
-                } else {
-                    assert_eq!(Some(idx), bits.select_zeros(running_rank_zeros));
-                    running_rank_zeros += 1;
-                }
-            }
-        }
-    }
-
-    impl<T: Deref<Target = [u8]>> Bits<T> {
-        fn to_bool_vec_slow(&self) -> Vec<bool> {
-            (0..self.used_bits())
-                .map(|idx| self.get(idx).unwrap())
-                .collect()
-        }
-    }
-
-    quickcheck! {
-        fn test_cmp_eq_model(l: Bits<Box<[u8]>>, r: Bits<Box<[u8]>>) -> () {
-            let l_vec = l.to_bool_vec_slow();
-            let r_vec = r.to_bool_vec_slow();
-            assert_eq!(l_vec.cmp(&r_vec), l.cmp(&r));
-            assert_eq!(l_vec.eq(&r_vec), l.eq(&r));
-        }
-    }
-
-    #[test]
-    fn test_eq_cmp() {
-        fn check(expected: Ordering, l: Option<Bits<Vec<u8>>>, r: Option<Bits<Vec<u8>>>) {
-            let l = l.unwrap();
-            let r = r.unwrap();
-            let expected_eq = match expected {
-                Ordering::Equal => true,
-                _ => false,
-            };
-            assert_eq!(expected_eq, l.eq(&r));
-            assert_eq!(expected, l.cmp(&r));
-        }
-
-        // Should ignore extra bits
-        check(
-            Ordering::Equal,
-            Bits::from_bytes(vec![0xff, 0xf0], 12),
-            Bits::from_bytes(vec![0xff, 0xff], 12),
-        );
-
-        check(
-            Ordering::Equal,
-            Bits::from_bytes(vec![], 0),
-            Bits::from_bytes(vec![], 0),
-        );
-        check(
-            Ordering::Less,
-            Bits::from_bytes(vec![0xff], 0),
-            Bits::from_bytes(vec![0xff], 1),
-        );
-        check(
-            Ordering::Greater,
-            Bits::from_bytes(vec![0xff], 1),
-            Bits::from_bytes(vec![0xff], 0),
-        );
-        check(
-            Ordering::Equal,
-            Bits::from_bytes(vec![0xff], 1),
-            Bits::from_bytes(vec![0xff], 1),
-        );
-        check(
-            Ordering::Less,
-            Bits::from_bytes(vec![0x00], 1),
-            Bits::from_bytes(vec![0xff], 1),
-        );
-        check(
-            Ordering::Greater,
-            Bits::from_bytes(vec![0xff], 1),
-            Bits::from_bytes(vec![0x00], 1),
-        );
-    }
-
-    quickcheck! {
-        fn fuzz_test_iter(bits: Bits<Box<[u8]>>) -> () {
-            let as_bools: Vec<bool> =
-                (0..bits.used_bits()).map(|idx| bits.get(idx).unwrap()).collect();
-            let ones_locs: Vec<u64> =
-                (0..bits.used_bits()).filter(|&idx| bits.get(idx).unwrap()).collect();
-            let zeros_locs: Vec<u64> =
-                (0..bits.used_bits()).filter(|&idx| !(bits.get(idx).unwrap())).collect();
-            assert_eq!(as_bools, bits.iter().collect::<Vec<_>>());
-            assert_eq!(ones_locs, bits.iter_set_bits().collect::<Vec<_>>());
-            assert_eq!(zeros_locs, bits.iter_zero_bits().collect::<Vec<_>>());
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests2 {
-    use super::*;
     use proptest::collection::vec as gen_vec;
     use proptest::collection::SizeRange;
     use proptest::prelude::*;
@@ -708,6 +455,44 @@ mod tests2 {
                 assert_eq!(None, bits.get(i));
             }
         }
+
+        let example_data = vec![0xff, 0xc0];
+        let bits = Bits::from_bytes(example_data.clone(), 10).unwrap();
+        for i in 0..10 {
+            assert_eq!(bits.get(i), Some(true), "Differed at position {}", i)
+        }
+        for i in 10..16 {
+            assert_eq!(bits.get(i), None, "Differed at position {}", i)
+        }
+    }
+
+    #[test]
+    fn test_count_examples() {
+        let pattern_a = [0xff, 0xaau8];
+        let bytes_a = &pattern_a[..];
+        let make = |len: u64| Bits::from_bytes(bytes_a, len).expect("valid");
+        assert_eq!(12, make(16).count_ones());
+        assert_eq!(4, make(16).count_zeros());
+        assert_eq!(12, make(15).count_ones());
+        assert_eq!(3, make(15).count_zeros());
+        assert_eq!(11, make(14).count_ones());
+        assert_eq!(3, make(14).count_zeros());
+        assert_eq!(11, make(13).count_ones());
+        assert_eq!(2, make(13).count_zeros());
+        assert_eq!(10, make(12).count_ones());
+        assert_eq!(2, make(12).count_zeros());
+        assert_eq!(10, make(11).count_ones());
+        assert_eq!(1, make(11).count_zeros());
+        assert_eq!(9, make(10).count_ones());
+        assert_eq!(1, make(10).count_zeros());
+        assert_eq!(9, make(9).count_ones());
+        assert_eq!(0, make(9).count_zeros());
+        assert_eq!(8, make(8).count_ones());
+        assert_eq!(0, make(8).count_zeros());
+        assert_eq!(7, make(7).count_ones());
+        assert_eq!(0, make(7).count_zeros());
+        assert_eq!(0, make(0).count_ones());
+        assert_eq!(0, make(0).count_zeros());
     }
 
     fn test_count_via_get(bits: Bits<Vec<u8>>, bit_to_count: bool) -> Result<(), TestCaseError> {
@@ -755,6 +540,24 @@ mod tests2 {
             prop_assert_eq!(bits.used_bits() - bits.count_ones(), bits.count_zeros());
         }
 
+    }
+
+    #[test]
+    fn test_rank_examples() {
+        let pattern_a = [0xff, 0xaau8];
+        let bytes_a = &pattern_a[..];
+        let make = |len: u64| Bits::from_bytes(bytes_a, len).expect("valid");
+        let bits_a = make(16);
+        for i in 0..15 {
+            assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
+            assert_eq!(Some(make(i).count_zeros()), bits_a.rank_zeros(i));
+        }
+        assert_eq!(None, bits_a.rank_ones(16));
+        assert_eq!(None, bits_a.rank_zeros(16));
+        assert_eq!(None, make(13).rank_ones(13));
+        assert_eq!(None, make(13).rank_zeros(13));
+        assert_eq!(bits_a.rank_ones(12), make(13).rank_ones(12));
+        assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
     }
 
     // TODO: Test rank via count instead (make the bits smaller)
@@ -822,6 +625,15 @@ mod tests2 {
                 prop_assert_eq!(via_rank_ones, bits.rank_zeros(idx));
             }
         }
+    }
+
+    #[test]
+    fn test_select_examples() {
+        let pattern_a = [0xff, 0xaau8];
+        let bytes_a = &pattern_a[..];
+        let make = |len: u64| Bits::from_bytes(bytes_a, len).expect("valid");
+        assert_eq!(Some(14), make(16).select_ones(11));
+        assert_eq!(None, make(14).select_ones(11));
     }
 
     fn test_select_via_count_rank_get(
@@ -936,6 +748,50 @@ mod tests2 {
         }
     }
 
+    fn gen_bit_index<T: Deref<Target = [u8]>>(bits: &Bits<T>) -> BoxedStrategy<Option<u64>> {
+        if bits.used_bits() == 0 {
+            Just(None).boxed()
+        } else {
+            (0..bits.used_bits()).prop_map(|x| Some(x)).boxed()
+        }
+    }
+
+    prop_compose! {
+        fn gen_set_task(byte_len: impl Into<SizeRange>)
+            (bits in gen_bits(byte_len))
+            (idx in gen_bit_index(&bits),
+             to in any::<bool>(),
+             bits in Just(bits))
+             -> (Bits<Vec<u8>>, Option<(u64, bool)>) {
+                match idx {
+                    None => (bits, None),
+                    Some(idx) => (bits, Some((idx, to))),
+                }
+            }
+    }
+
+    proptest! {
+        #[test]
+        fn test_set((bits, task) in gen_set_task(0..=1024)) {
+            let (idx, to) = match task {
+                None => return Ok(()),
+                Some(x) => x,
+            };
+
+            let original_bits = bits.clone();
+            let mut bits = bits;
+            prop_assert_eq!(Ok(()), bits.set(idx, to));
+
+            for check_idx in 0..bits.used_bits() {
+                if check_idx == idx {
+                    prop_assert_eq!(Some(to), bits.get(check_idx));
+                } else {
+                    prop_assert_eq!(original_bits.get(check_idx), bits.get(check_idx));
+                }
+            }
+        }
+    }
+
     proptest! {
         #[test]
         fn test_iter_and_into_iter_via_get(bits in gen_bits(0..=1024)) {
@@ -969,6 +825,58 @@ mod tests2 {
             prop_assert_eq!(&from_get, &from_iter);
             prop_assert_eq!(&from_get, &from_into_iter);
         }
+    }
+
+    #[test]
+    fn test_eq_and_cmp_examples() {
+        fn check(expected: Ordering, l: Option<Bits<Vec<u8>>>, r: Option<Bits<Vec<u8>>>) {
+            let l = l.unwrap();
+            let r = r.unwrap();
+            let expected_eq = match expected {
+                Ordering::Equal => true,
+                _ => false,
+            };
+            assert_eq!(expected_eq, l.eq(&r));
+            assert_eq!(expected, l.cmp(&r));
+        }
+
+        // Should ignore extra bits
+        check(
+            Ordering::Equal,
+            Bits::from_bytes(vec![0xff, 0xf0], 12),
+            Bits::from_bytes(vec![0xff, 0xff], 12),
+        );
+
+        check(
+            Ordering::Equal,
+            Bits::from_bytes(vec![], 0),
+            Bits::from_bytes(vec![], 0),
+        );
+        check(
+            Ordering::Less,
+            Bits::from_bytes(vec![0xff], 0),
+            Bits::from_bytes(vec![0xff], 1),
+        );
+        check(
+            Ordering::Greater,
+            Bits::from_bytes(vec![0xff], 1),
+            Bits::from_bytes(vec![0xff], 0),
+        );
+        check(
+            Ordering::Equal,
+            Bits::from_bytes(vec![0xff], 1),
+            Bits::from_bytes(vec![0xff], 1),
+        );
+        check(
+            Ordering::Less,
+            Bits::from_bytes(vec![0x00], 1),
+            Bits::from_bytes(vec![0xff], 1),
+        );
+        check(
+            Ordering::Greater,
+            Bits::from_bytes(vec![0xff], 1),
+            Bits::from_bytes(vec![0x00], 1),
+        );
     }
 
     fn test_eq_and_cmp_on(l: Bits<Vec<u8>>, r: Bits<Vec<u8>>) -> Result<(), TestCaseError> {

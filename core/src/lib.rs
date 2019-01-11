@@ -17,10 +17,6 @@
 //! fast rank & select operations on bitvectors.
 #![no_std]
 
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-
 #[cfg(test)]
 #[macro_use]
 extern crate std;
@@ -86,3 +82,5 @@ mod tests {
         assert!(<u64>::max_value() / 8 <= <usize>::max_value() as u64);
     }
 }
+
+// TODO: Test ceil_div

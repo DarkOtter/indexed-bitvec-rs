@@ -17,10 +17,6 @@ travis-ci = { repository = "DarkOtter/indexed-bitvec-rs" }
 default = []
 implement_heapsize = ["heapsize"]
 
-[dependencies]
-serde = { version = "1.0", default-features = false }
-serde_derive = { version = "1.0", default-features = false }
-
 [dependencies.heapsize]
 optional = true
 version = "0.4"

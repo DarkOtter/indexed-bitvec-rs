@@ -770,7 +770,6 @@ pub fn select_zeros(index: &[u64], all_bits: BitsRef, target_rank: u64) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bits_ref::GenBits;
     use std::vec::Vec;
 
     #[test]

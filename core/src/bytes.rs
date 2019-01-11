@@ -37,19 +37,6 @@ fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     }
 }
 
-pub(crate) fn set_unchecked(data: &mut [u8], idx_bits: u64, to: bool) {
-    let byte_idx = (idx_bits / 8) as usize;
-    let idx_in_byte = (idx_bits % 8) as usize;
-
-    let mask = 0x80 >> idx_in_byte;
-
-    if to {
-        data[byte_idx] |= mask
-    } else {
-        data[byte_idx] &= !mask
-    }
-}
-
 fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     use core::mem::{align_of, size_of};
 
@@ -61,7 +48,11 @@ fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
     let alignment_offset = {
         let need_alignment = align_of::<u64>();
         let rem = (data.as_ptr() as usize) % need_alignment;
-        if rem > 0 { need_alignment - rem } else { 0 }
+        if rem > 0 {
+            need_alignment - rem
+        } else {
+            0
+        }
     };
 
     let (pre_partial, data) = data.split_at(alignment_offset);
@@ -95,8 +86,9 @@ pub fn count_ones(data: &[u8]) -> u64 {
     match bytes_as_u64s(data) {
         Err(data) => count_ones_bytes_slow(data),
         Ok((pre_partial, data, post_partial)) => {
-            count_ones_bytes_slow(pre_partial) + count_ones_words(data) +
-                count_ones_bytes_slow(post_partial)
+            count_ones_bytes_slow(pre_partial)
+                + count_ones_words(data)
+                + count_ones_bytes_slow(post_partial)
         }
     }
 }
@@ -179,8 +171,8 @@ pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::vec::Vec;
     use crate::ones_or_zeros::{OneBits, ZeroBits};
+    use std::vec::Vec;
 
     #[test]
     fn test_get() {
@@ -207,14 +199,6 @@ mod tests {
     }
 
     quickcheck! {
-        fn test_set_unchecked(bools: Vec<bool>) -> bool {
-            let mut data = vec![0; (bools.len() + 7) / 8].into_boxed_slice();
-            bools.iter().cloned().enumerate().for_each(
-                |(idx, boolean)| set_unchecked(&mut data[..], idx as u64, boolean));
-            bools.iter().cloned().enumerate().all(
-                |(idx, boolean)| Some(boolean) == get(&data[..], idx as u64))
-        }
-
         fn test_count(data: Vec<u8>) -> bool {
             let mut expected_count_ones = 0u64;
             let mut expected_count_zeros = 0u64;
