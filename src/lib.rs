@@ -26,6 +26,9 @@ extern crate indexed_bitvec_core;
 extern crate heapsize;
 
 #[cfg(test)]
+#[macro_use]
+extern crate proptest;
+#[cfg(test)]
 extern crate bincode;
 
 mod bits;
