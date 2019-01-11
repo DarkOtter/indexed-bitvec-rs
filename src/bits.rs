@@ -19,8 +19,30 @@ use std::ops::Deref;
 
 /// Bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[serde(remote = "Self")]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
-// TODO: Have deserialisation check length
+
+impl<T: serde::Serialize + Deref<Target = [u8]>> serde::Serialize for Bits<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        Bits::serialize(self, serializer)
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de> + Deref<Target = [u8]>> serde::Deserialize<'de> for Bits<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let (bytes, used_bits) = Bits::deserialize(deserializer)?.decompose();
+        match Bits::from_bytes(bytes, used_bits) {
+            Some(x) => Ok(x),
+            None => Err(serde::de::Error::custom("Invalid bits data")),
+        }
+    }
+}
 
 impl<'a, T: Deref<Target = [u8]>> From<&'a Bits<T>> for BitsRef<'a> {
     fn from(bits: &'a Bits<T>) -> Self {
