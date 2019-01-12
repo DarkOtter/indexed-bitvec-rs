@@ -34,8 +34,8 @@ impl<'a> BitsRef<'a> {
             .chunks(bytes_per_chunk)
             .enumerate()
             .map(move |(i, chunk)| {
-                let used_bits = i as u64 * bits_per_chunk;
-                let bits = min(self.used_bits() - used_bits, bits_per_chunk);
+                let len = i as u64 * bits_per_chunk;
+                let bits = min(self.len() - len, bits_per_chunk);
                 BitsRef::from_bytes(chunk, bits).expect("Size invariant violated")
             })
     }
@@ -46,7 +46,7 @@ impl<'a> BitsRef<'a> {
         if n_bytes >= bytes.len() {
             panic!("Index out of bounds: tried to drop all of the bits");
         }
-        BitsRef::from_bytes(&bytes[n_bytes..], self.used_bits() - (n_bytes as u64 * 8))
+        BitsRef::from_bytes(&bytes[n_bytes..], self.len() - (n_bytes as u64 * 8))
             .expect("Checked sufficient bytes are present")
     }
 }
@@ -227,11 +227,11 @@ mod structure {
     }
 
     pub fn split_l0<'a>(index: &'a [u64], data: BitsRef) -> (&'a [u64], &'a [u64]) {
-        index.split_at(size::l0(data.used_bits()))
+        index.split_at(size::l0(data.len()))
     }
 
     pub fn split_l0_mut<'a>(index: &'a mut [u64], data: BitsRef) -> (&'a mut [u64], &'a mut [u64]) {
-        index.split_at_mut(size::l0(data.used_bits()))
+        index.split_at_mut(size::l0(data.len()))
     }
 
     #[derive(Copy, Clone, Debug)]
@@ -241,7 +241,7 @@ mod structure {
         index_after_l0: &'a [u64],
         data: BitsRef,
     ) -> (L1L2Indexes<'a>, &'a [u64]) {
-        let (l1l2, other) = index_after_l0.split_at(size::l1l2(data.used_bits()));
+        let (l1l2, other) = index_after_l0.split_at(size::l1l2(data.len()));
         (L1L2Indexes(cast_to_l1l2(l1l2)), other)
     }
 
@@ -249,7 +249,7 @@ mod structure {
         index_after_l0: &'a mut [u64],
         data: BitsRef,
     ) -> (&'a mut [L1L2Entry], &'a mut [u64]) {
-        let (l1l2, other) = index_after_l0.split_at_mut(size::l1l2(data.used_bits()));
+        let (l1l2, other) = index_after_l0.split_at_mut(size::l1l2(data.len()));
         (cast_to_l1l2_mut(l1l2), other)
     }
 
@@ -260,7 +260,7 @@ mod structure {
     ) -> (&'a [SampleEntry], &'a [SampleEntry]) {
         let all_samples = cast_to_samples(index_after_l1l2);
         let n_samples_ones = size::samples_for_bits(count_ones);
-        let n_samples_zeros = size::samples_for_bits(data.used_bits() - count_ones);
+        let n_samples_zeros = size::samples_for_bits(data.len() - count_ones);
         let (ones_samples, other_samples) = all_samples.split_at(n_samples_ones);
         let zeros_samples = &other_samples[..n_samples_zeros];
         (ones_samples, zeros_samples)
@@ -271,10 +271,10 @@ mod structure {
         data: BitsRef,
         count_ones: u64,
     ) -> (&'a mut [SampleEntry], &'a mut [SampleEntry]) {
-        debug_assert!(index_after_l1l2.len() == size::sample_words(data.used_bits()));
+        debug_assert!(index_after_l1l2.len() == size::sample_words(data.len()));
         let all_samples = cast_to_samples_mut(index_after_l1l2);
         let n_samples_ones = size::samples_for_bits(count_ones);
-        let n_samples_zeros = size::samples_for_bits(data.used_bits() - count_ones);
+        let n_samples_zeros = size::samples_for_bits(data.len() - count_ones);
         debug_assert!(all_samples.len() >= n_samples_ones + n_samples_zeros);
         debug_assert!(all_samples.len() <= n_samples_ones + n_samples_zeros + 2);
         let (ones_samples, other_samples) = all_samples.split_at_mut(n_samples_ones);
@@ -297,7 +297,7 @@ mod structure {
             let start_idx = l0_idx * size::L1_BLOCKS_PER_L0_BLOCK;
             let end_idx = min(start_idx + size::L1_BLOCKS_PER_L0_BLOCK, self.0.len());
             let block_count_to_end =
-                size::blocks(all_bits.used_bits()) - start_idx * size::L2_BLOCKS_PER_L1_BLOCK;
+                size::blocks(all_bits.len()) - start_idx * size::L2_BLOCKS_PER_L1_BLOCK;
             L1L2Index {
                 block_count: min(block_count_to_end, size::L2_BLOCKS_PER_L0_BLOCK),
                 index_data: &self.0[start_idx..end_idx],
@@ -348,7 +348,7 @@ use self::structure::{L1L2Entry, L1L2Index, L1L2Indexes, SampleEntry};
 /// calculations. The number returned is the number of `u64`s needed to
 /// store the index.
 pub fn index_size_for(bits: BitsRef) -> usize {
-    size::total_index_words(bits.used_bits())
+    size::total_index_words(bits.len())
 }
 
 /// Indicates the index storage was the wrong size for the bit vector it was used with.
@@ -371,7 +371,7 @@ pub fn check_index_size(index: &[u64], bits: BitsRef) -> Result<(), IndexSizeErr
 pub fn build_index_for(bits: BitsRef, into: &mut [u64]) -> Result<(), IndexSizeError> {
     check_index_size(into, bits)?;
 
-    if bits.used_bits() == 0 {
+    if bits.len() == 0 {
         debug_assert_eq!(0, into.len());
         return Ok(());
     }
@@ -407,9 +407,9 @@ pub fn build_index_for(bits: BitsRef, into: &mut [u64]) -> Result<(), IndexSizeE
 
 /// Build the inner l1l2 index and return the total count of set bits.
 fn build_inner_l1l2(l1l2_index: &mut [L1L2Entry], data_chunk: BitsRef) -> u64 {
-    debug_assert!(data_chunk.used_bits() > 0);
-    debug_assert!(data_chunk.used_bits() <= size::BITS_PER_L0_BLOCK);
-    debug_assert!(l1l2_index.len() == size::l1l2(data_chunk.used_bits()));
+    debug_assert!(data_chunk.len() > 0);
+    debug_assert!(data_chunk.len() <= size::BITS_PER_L0_BLOCK);
+    debug_assert!(l1l2_index.len() == size::l1l2(data_chunk.len()));
 
     data_chunk
         .chunks_by_bytes(size::BYTES_PER_L1_BLOCK)
@@ -559,10 +559,10 @@ fn build_samples_inner<W: OnesOrZeros>(
 /// Count the set bits using the index (fast *O(1)*).
 #[inline]
 pub fn count_ones(index: &[u64], bits: BitsRef) -> u64 {
-    if bits.used_bits() == 0 {
+    if bits.len() == 0 {
         return 0;
     }
-    let l0_size = size::l0(bits.used_bits());
+    let l0_size = size::l0(bits.len());
     debug_assert!(l0_size > 0);
     index[l0_size - 1]
 }
@@ -570,7 +570,7 @@ pub fn count_ones(index: &[u64], bits: BitsRef) -> u64 {
 /// Count the unset bits using the index (fast *O(1)*).
 #[inline]
 pub fn count_zeros(index: &[u64], bits: BitsRef) -> u64 {
-    ZeroBits::convert_count(count_ones(index, bits), bits.used_bits())
+    ZeroBits::convert_count(count_ones(index, bits), bits.len())
 }
 
 fn read_l0_cumulative_count<W: OnesOrZeros>(l0_index: &[u64], bits: BitsRef, idx: usize) -> u64 {
@@ -578,7 +578,7 @@ fn read_l0_cumulative_count<W: OnesOrZeros>(l0_index: &[u64], bits: BitsRef, idx
     let total_count = if idx + 1 < l0_index.len() {
         (idx as u64 + 1) * size::BITS_PER_L0_BLOCK
     } else {
-        bits.used_bits()
+        bits.len()
     };
     W::convert_count(count_ones, total_count)
 }
@@ -595,7 +595,7 @@ fn read_l0_rank<W: OnesOrZeros>(l0_index: &[u64], bits: BitsRef, idx: usize) -> 
 ///
 /// Returns `None` it the index is out of bounds.
 pub fn rank_ones(index: &[u64], all_bits: BitsRef, idx: u64) -> Option<u64> {
-    if idx >= all_bits.used_bits() {
+    if idx >= all_bits.len() {
         return None;
     } else if idx == 0 {
         return Some(0);
@@ -669,13 +669,13 @@ where
 }
 
 fn select<W: OnesOrZeros>(index: &[u64], all_bits: BitsRef, target_rank: u64) -> Option<u64> {
-    if all_bits.used_bits() == 0 {
+    if all_bits.len() == 0 {
         return None;
     }
     let (l0_index, index_after_l0) = structure::split_l0(index, all_bits);
     debug_assert!(l0_index.len() > 0);
     let total_count_ones = l0_index[l0_index.len() - 1];
-    let total_count = W::convert_count(total_count_ones, all_bits.used_bits());
+    let total_count = W::convert_count(total_count_ones, all_bits.len());
     if target_rank >= total_count {
         return None;
     }

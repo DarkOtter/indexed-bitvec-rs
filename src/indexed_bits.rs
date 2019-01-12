@@ -17,7 +17,7 @@
 use crate::bits::Bits;
 use indexed_bitvec_core::bits_ref::BitsRef;
 use indexed_bitvec_core::index_raw;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 
 /// Bits stored with extra index data for fast rank and select.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -36,7 +36,7 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
             let bits_ref = BitsRef::from(&bits);
             let index = vec![0u64; index_raw::index_size_for(bits_ref)];
             let mut index = index.into_boxed_slice();
-            index_raw::build_index_for(bits_ref, index.deref_mut())
+            index_raw::build_index_for(bits_ref, &mut index)
                 .expect("Specifically made index of the right size");
             index
         };
@@ -53,8 +53,8 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     }
 
     #[inline]
-    pub fn bits_ref(&self) -> BitsRef {
-        BitsRef::from(&self.bits)
+    fn bits_ref(&self) -> BitsRef {
+        self.bits().into()
     }
 
     /// Discard the index and get the original bit sequence storage back.
@@ -124,12 +124,13 @@ impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bits::gen_bits;
     use proptest::collection::SizeRange;
     use proptest::prelude::*;
 
     prop_compose! {
         fn gen_indexed_bits_inner(byte_len: SizeRange)
-            (bits in crate::bits::gen_bits(byte_len))
+            (bits in gen_bits(byte_len))
              -> IndexedBits<Vec<u8>>
         {
             IndexedBits::build_index(bits)
@@ -140,6 +141,20 @@ mod tests {
         byte_len: impl Into<SizeRange>,
     ) -> impl Strategy<Value = IndexedBits<Vec<u8>>> {
         gen_indexed_bits_inner(byte_len.into())
+    }
+
+    proptest! {
+        #[test]
+        fn test_bits_refs_and_decompose(original_bits in gen_bits(0..=1024)) {
+            let indexed = IndexedBits::build_index(original_bits.clone());
+            prop_assert_eq!(original_bits.clone_ref(), indexed.bits());
+            prop_assert_eq!(BitsRef::from(&original_bits), indexed.bits_ref());
+            prop_assert_eq!(original_bits, indexed.decompose());
+        }
+    }
+
+    fn from_bytes_or_panic<T: Deref<Target = [u8]>>(bytes: T, len: u64) -> IndexedBits<T> {
+        IndexedBits::build_index(Bits::from_bytes(bytes, len).expect("invalid bytes in test"))
     }
 
     // TODO: Test index bits
@@ -153,7 +168,7 @@ mod tests {
         let src_data = include_bytes!("../examples/strange-cases/succinct-trie.bin");
         let bitvec: Bits<Vec<u8>> = bincode::deserialize(src_data).unwrap();
         let bits = bitvec.clone_ref();
-        assert_eq!(1178631, bits.used_bits());
+        assert_eq!(1178631, bits.len());
         assert_eq!(589316, bits.count_ones());
         assert_eq!(589315, bits.count_zeros());
         let bits = IndexedBits::build_index(bits);

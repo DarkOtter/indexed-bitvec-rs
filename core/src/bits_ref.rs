@@ -28,14 +28,14 @@ impl<'a> From<BitsRef<'a>> for (&'a [u8], u64) {
     }
 }
 
-fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
-    ceil_div_u64(used_bits, 8) <= bytes.len() as u64
+fn big_enough(bytes: &[u8], len: u64) -> bool {
+    ceil_div_u64(len, 8) <= bytes.len() as u64
 }
 
 impl<'a> BitsRef<'a> {
-    pub fn from_bytes(bytes: &'a [u8], used_bits: u64) -> Option<Self> {
-        if big_enough(bytes, used_bits) {
-            Some(BitsRef((bytes, used_bits)))
+    pub fn from_bytes(bytes: &'a [u8], len: u64) -> Option<Self> {
+        if big_enough(bytes, len) {
+            Some(BitsRef((bytes, len)))
         } else {
             None
         }
@@ -49,7 +49,7 @@ impl<'a> BitsRef<'a> {
 
     /// The number of bits used in the storage.
     #[inline]
-    pub fn used_bits(self) -> u64 {
+    pub fn len(self) -> u64 {
         (self.0).1
     }
 
@@ -58,10 +58,10 @@ impl<'a> BitsRef<'a> {
     #[inline]
     pub fn bytes(self) -> &'a [u8] {
         let all_bytes = self.all_bytes();
-        debug_assert!(big_enough(all_bytes, self.used_bits()));
+        debug_assert!(big_enough(all_bytes, self.len()));
         // This will not overflow because we checked the size
         // when we made self...
-        &all_bytes[..ceil_div_u64(self.used_bits(), 8) as usize]
+        &all_bytes[..ceil_div_u64(self.len(), 8) as usize]
     }
 
     /// Get the byte at a specific index.
@@ -69,18 +69,18 @@ impl<'a> BitsRef<'a> {
     /// Returns `None` for out-of-bounds.
     #[inline]
     pub fn get(self, idx_bits: u64) -> Option<bool> {
-        if idx_bits >= self.used_bits() {
+        if idx_bits >= self.len() {
             None
         } else {
-            debug_assert!(big_enough(self.all_bytes(), self.used_bits()));
+            debug_assert!(big_enough(self.all_bytes(), self.len()));
             Some(bytes::get_unchecked(self.all_bytes(), idx_bits))
         }
     }
 
     /// Count the set bits (*O(n)*).
     pub fn count_ones(self) -> u64 {
-        if (self.used_bits() % 8) != 0 {
-            bytes::rank_ones(self.all_bytes(), self.used_bits())
+        if (self.len() % 8) != 0 {
+            bytes::rank_ones(self.all_bytes(), self.len())
                 .expect("Internally called rank out-of-range")
         } else {
             bytes::count_ones(self.bytes())
@@ -90,14 +90,14 @@ impl<'a> BitsRef<'a> {
     /// Count the unset bits (*O(n)*).
     #[inline]
     pub fn count_zeros(self) -> u64 {
-        ZeroBits::convert_count(self.count_ones(), self.used_bits())
+        ZeroBits::convert_count(self.count_ones(), self.len())
     }
 
     /// Count the set bits before a position in the bits (*O(n)*).
     ///
     /// Returns `None` it the index is out of bounds.
     pub fn rank_ones(self, idx: u64) -> Option<u64> {
-        if idx >= self.used_bits() {
+        if idx >= self.len() {
             None
         } else {
             Some(
@@ -121,7 +121,7 @@ impl<'a> BitsRef<'a> {
         match res {
             None => None,
             Some(res) => {
-                if res >= self.used_bits() {
+                if res >= self.len() {
                     None
                 } else {
                     Some(res)
@@ -157,7 +157,7 @@ fn must_have_or_bug<T>(opt: Option<T>) -> T {
 
 impl<'a> core::cmp::Ord for BitsRef<'a> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let common_len = min(self.used_bits(), other.used_bits());
+        let common_len = min(self.len(), other.len());
         let common_full_byte_len = (common_len / 8) as usize;
 
         let full_bytes_self = &(self.all_bytes())[..common_full_byte_len];
@@ -176,7 +176,7 @@ impl<'a> core::cmp::Ord for BitsRef<'a> {
             }
         }
 
-        self.used_bits().cmp(&other.used_bits())
+        self.len().cmp(&other.len())
     }
 }
 
@@ -190,7 +190,7 @@ impl<'a> core::cmp::Eq for BitsRef<'a> {}
 
 impl<'a> core::cmp::PartialEq for BitsRef<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.used_bits() == other.used_bits() && self.cmp(other) == Ordering::Equal
+        self.len() == other.len() && self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -203,10 +203,9 @@ mod tests {
 
     fn from_or_panic<'a, T: ?Sized + std::ops::Deref<Target = [u8]>>(
         bytes: &'a T,
-        used_bits: u64,
+        len: u64,
     ) -> BitsRef<'a> {
-        BitsRef::from_bytes(bytes.deref(), used_bits)
-            .expect("Tried to make an invalid BitsRef in tests")
+        BitsRef::from_bytes(bytes.deref(), len).expect("Tried to make an invalid BitsRef in tests")
     }
 
     mod gen_bits {
@@ -237,7 +236,7 @@ mod tests {
     fn test_get() {
         let pattern_a = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
         let bits_a = from_or_panic(&pattern_a, 8 * 8);
-        for i in 0..bits_a.used_bits() {
+        for i in 0..bits_a.len() {
             assert_eq!(
                 bits_a.get(i).unwrap(),
                 i / 8 == i % 8,
@@ -316,7 +315,7 @@ mod tests {
             let bits = bits.as_ref();
             let mut running_rank_ones = 0;
             let mut running_rank_zeros = 0;
-            for idx in 0..bits.used_bits() {
+            for idx in 0..bits.len() {
                 assert_eq!(Some(running_rank_ones), bits.rank_ones(idx));
                 assert_eq!(Some(running_rank_zeros), bits.rank_zeros(idx));
                 if bits.get(idx).unwrap() {
@@ -332,9 +331,7 @@ mod tests {
 
     impl<'a> BitsRef<'a> {
         fn to_bool_vec_slow(self) -> Vec<bool> {
-            (0..self.used_bits())
-                .map(|idx| self.get(idx).unwrap())
-                .collect()
+            (0..self.len()).map(|idx| self.get(idx).unwrap()).collect()
         }
     }
 

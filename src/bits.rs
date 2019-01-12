@@ -36,23 +36,22 @@ impl<'de, T: serde::Deserialize<'de> + Deref<Target = [u8]>> serde::Deserialize<
     where
         D: serde::Deserializer<'de>,
     {
-        let (bytes, used_bits) = Bits::deserialize(deserializer)?.decompose();
-        Bits::from_bytes(bytes, used_bits)
-            .ok_or_else(|| serde::de::Error::custom("Invalid bits data"))
+        let (bytes, len) = Bits::deserialize(deserializer)?.decompose();
+        Bits::from_bytes(bytes, len).ok_or_else(|| serde::de::Error::custom("Invalid bits data"))
     }
 }
 
 impl<'a, T: Deref<Target = [u8]>> From<&'a Bits<T>> for BitsRef<'a> {
     fn from(bits: &'a Bits<T>) -> Self {
-        let used_bits = (bits.0).1;
-        BitsRef::from_bytes((bits.0).0.deref(), used_bits).expect("Bits with invalid used_bits")
+        let len = (bits.0).1;
+        BitsRef::from_bytes((bits.0).0.deref(), len).expect("Bits with invalid len")
     }
 }
 
 impl<'a> From<Bits<&'a [u8]>> for BitsRef<'a> {
     fn from(bits: Bits<&'a [u8]>) -> Self {
-        let used_bits = (bits.0).1;
-        BitsRef::from_bytes((bits.0).0, used_bits).expect("Bits with invalid used_bits")
+        let len = (bits.0).1;
+        BitsRef::from_bytes((bits.0).0, len).expect("Bits with invalid len")
     }
 }
 
@@ -63,11 +62,11 @@ impl<'a> From<BitsRef<'a>> for Bits<&'a [u8]> {
 }
 
 impl<T: Deref<Target = [u8]>> Bits<T> {
-    pub fn from_bytes(bytes: T, used_bits: u64) -> Option<Self> {
+    pub fn from_bytes(bytes: T, len: u64) -> Option<Self> {
         // Use BitsRef to check the size
-        match BitsRef::from_bytes(bytes.deref(), used_bits) {
+        match BitsRef::from_bytes(bytes.deref(), len) {
             None => None,
-            Some(_) => Some(Bits((bytes, used_bits))),
+            Some(_) => Some(Bits((bytes, len))),
         }
     }
 
@@ -79,7 +78,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 
     /// The number of bits used in the storage.
     #[inline]
-    pub fn used_bits(&self) -> u64 {
+    pub fn len(&self) -> u64 {
         (self.0).1
     }
 
@@ -120,7 +119,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count_ones(), 14);
     /// assert_eq!(bits.count_zeros(), 1);
-    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
+    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.len());
     /// ```
     pub fn count_ones(&self) -> u64 {
         BitsRef::from(self).count_ones()
@@ -133,7 +132,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count_ones(), 14);
     /// assert_eq!(bits.count_zeros(), 1);
-    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.used_bits());
+    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.len());
     /// ```
     #[inline]
     pub fn count_zeros(&self) -> u64 {
@@ -147,7 +146,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// ```
     /// use indexed_bitvec::bits::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert!((0..bits.used_bits()).all(|idx|
+    /// assert!((0..bits.len()).all(|idx|
     ///     bits.rank_ones(idx).unwrap()
     ///     + bits.rank_zeros(idx).unwrap()
     ///     == (idx as u64)));
@@ -170,7 +169,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// ```
     /// use indexed_bitvec::bits::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert!((0..bits.used_bits()).all(|idx|
+    /// assert!((0..bits.len()).all(|idx|
     ///     bits.rank_ones(idx).unwrap()
     ///     + bits.rank_zeros(idx).unwrap()
     ///     == (idx as u64)));
@@ -225,7 +224,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
 
     /// Create a reference to these same bits.
     pub fn clone_ref(&self) -> Bits<&[u8]> {
-        Bits::from_bytes(self.all_bytes(), self.used_bits()).expect("Bits with invalid used_bits")
+        Bits::from_bytes(self.all_bytes(), self.len()).expect("Bits with invalid len")
     }
 }
 
@@ -257,8 +256,8 @@ impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
     /// assert!(bits.set(15, false).is_err());
     /// ```
     pub fn set(&mut self, idx_bits: u64, to: bool) -> Result<(), &'static str> {
-        let used_bits = self.used_bits();
-        if idx_bits >= used_bits {
+        let len = self.len();
+        if idx_bits >= len {
             Err("Index out-of-bounds")
         } else {
             let data = self.all_bytes_mut();
@@ -339,7 +338,7 @@ impl<T: Deref<Target = [u8]>> BitIterator<T> {
     where
         F: Fn(Bits<&[u8]>, u64) -> Option<u64>,
     {
-        if self.search_from >= self.search_in.used_bits() {
+        if self.search_from >= self.search_in.len() {
             return None;
         }
 
@@ -350,14 +349,14 @@ impl<T: Deref<Target = [u8]>> BitIterator<T> {
 
         let remaining_part = must_have_or_bug(Bits::from_bytes(
             &(self.search_in.all_bytes())[byte_index..],
-            self.search_in.used_bits() - byte_index_bits,
+            self.search_in.len() - byte_index_bits,
         ));
 
         let next_rank = with_remaining(remaining_part, byte_offset);
 
         match next_rank {
             None => {
-                self.search_from = self.search_in.used_bits();
+                self.search_from = self.search_in.len();
                 None
             }
             Some(next_sub_idx) => {
@@ -446,11 +445,11 @@ mod tests {
     prop_compose! {
         fn gen_bits_inner(byte_len: SizeRange)
             (data in gen_vec(any::<u8>(), byte_len))
-            (used_bits in 0..=((data.len() as u64) * 8),
+            (len in 0..=((data.len() as u64) * 8),
              data in Just(data))
             -> Bits<Vec<u8>>
         {
-            Bits::from_bytes(data, used_bits).unwrap()
+            Bits::from_bytes(data, len).unwrap()
         }
     }
 
@@ -478,7 +477,7 @@ mod tests {
 
         #[test]
         fn test_bytes(bits in gen_bits(0..=1024)) {
-            let need_bytes = ((bits.used_bits() + 7) / 8) as usize;
+            let need_bytes = ((bits.len() + 7) / 8) as usize;
             prop_assert_eq!(&bits.all_bytes()[..need_bytes], bits.bytes());
         }
     }
@@ -541,7 +540,7 @@ mod tests {
         where
             F: Fn(&Bits<Vec<u8>>) -> u64,
         {
-            let count_via_get = (0..bits.used_bits())
+            let count_via_get = (0..bits.len())
                 .filter(|&idx| bits.get(idx).unwrap() == bit_to_count)
                 .count() as u64;
             prop_assert_eq!(count_via_get, f(&bits));
@@ -578,7 +577,7 @@ mod tests {
 
         #[test]
         fn test_count_zeros_via_count_ones(bits in gen_bits(0..=1024)) {
-            prop_assert_eq!(bits.used_bits() - bits.count_ones(), bits.count_zeros());
+            prop_assert_eq!(bits.len() - bits.count_ones(), bits.count_zeros());
         }
 
     }
@@ -607,8 +606,8 @@ mod tests {
             F: Fn(&Bits<Vec<u8>>, u64) -> Option<u64>,
         {
             let mut running_rank = 0;
-            for idx in 0..=(bits.used_bits() + 64) {
-                if idx >= bits.used_bits() {
+            for idx in 0..=(bits.len() + 64) {
+                if idx >= bits.len() {
                     prop_assert_eq!(None, f(&bits, idx), "should be out of range at {}", idx);
                 } else {
                     prop_assert_eq!(
@@ -659,7 +658,7 @@ mod tests {
 
         #[test]
         fn test_rank_zeros_via_rank_ones(bits in gen_bits(0..=1024)) {
-            for idx in 0..=(bits.used_bits() + 64) {
+            for idx in 0..=(bits.len() + 64) {
                 let via_rank_ones =
                     bits.rank_ones(idx).map(|ones| idx - ones);
                 prop_assert_eq!(via_rank_ones, bits.rank_zeros(idx));
@@ -788,10 +787,10 @@ mod tests {
     }
 
     fn gen_bit_index<T: Deref<Target = [u8]>>(bits: &Bits<T>) -> BoxedStrategy<Option<u64>> {
-        if bits.used_bits() == 0 {
+        if bits.len() == 0 {
             Just(None).boxed()
         } else {
-            (0..bits.used_bits()).prop_map(|x| Some(x)).boxed()
+            (0..bits.len()).prop_map(|x| Some(x)).boxed()
         }
     }
 
@@ -821,7 +820,7 @@ mod tests {
             let mut bits = bits;
             prop_assert_eq!(Ok(()), bits.set(idx, to));
 
-            for check_idx in 0..bits.used_bits() {
+            for check_idx in 0..bits.len() {
                 if check_idx == idx {
                     prop_assert_eq!(Some(to), bits.get(check_idx));
                 } else {
@@ -834,7 +833,7 @@ mod tests {
     proptest! {
         #[test]
         fn test_iter_and_into_iter_via_get(bits in gen_bits(0..=1024)) {
-            let from_get: Vec<_> = (0..bits.used_bits())
+            let from_get: Vec<_> = (0..bits.len())
                 .map(|idx| bits.get(idx).unwrap())
                 .collect();
             let from_iter: Vec<_> = bits.iter().collect();
@@ -845,7 +844,7 @@ mod tests {
 
         #[test]
         fn test_iter_and_into_iter_one_bits_via_get(bits in gen_bits(0..=1024)) {
-            let from_get: Vec<_> = (0..bits.used_bits())
+            let from_get: Vec<_> = (0..bits.len())
                 .filter(|&idx| bits.get(idx).unwrap())
                 .collect();
             let from_iter: Vec<_> = bits.iter_one_bits().collect();
@@ -856,7 +855,7 @@ mod tests {
 
         #[test]
         fn test_iter_and_into_iter_zero_bits_via_get(bits in gen_bits(0..=1024)) {
-            let from_get: Vec<_> = (0..bits.used_bits())
+            let from_get: Vec<_> = (0..bits.len())
                 .filter(|&idx| !(bits.get(idx).unwrap()))
                 .collect();
             let from_iter: Vec<_> = bits.iter_zero_bits().collect();
