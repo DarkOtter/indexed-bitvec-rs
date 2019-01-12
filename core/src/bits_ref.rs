@@ -22,6 +22,12 @@ use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 #[derive(Copy, Clone, Debug)]
 pub struct BitsRef<'a>((&'a [u8], u64));
 
+impl<'a> From<BitsRef<'a>> for (&'a [u8], u64) {
+    fn from(bits: BitsRef<'a>) -> Self {
+        bits.0
+    }
+}
+
 fn big_enough(bytes: &[u8], used_bits: u64) -> bool {
     ceil_div_u64(used_bits, 8) <= bytes.len() as u64
 }
@@ -56,12 +62,6 @@ impl<'a> BitsRef<'a> {
         // This will not overflow because we checked the size
         // when we made self...
         &all_bytes[..ceil_div_u64(self.used_bits(), 8) as usize]
-    }
-
-    /// Get back the separate reference and used bits.
-    #[inline]
-    pub fn decompose(self) -> (&'a [u8], u64) {
-        self.0
     }
 
     /// Get the byte at a specific index.

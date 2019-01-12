@@ -37,10 +37,8 @@ impl<'de, T: serde::Deserialize<'de> + Deref<Target = [u8]>> serde::Deserialize<
         D: serde::Deserializer<'de>,
     {
         let (bytes, used_bits) = Bits::deserialize(deserializer)?.decompose();
-        match Bits::from_bytes(bytes, used_bits) {
-            Some(x) => Ok(x),
-            None => Err(serde::de::Error::custom("Invalid bits data")),
-        }
+        Bits::from_bytes(bytes, used_bits)
+            .ok_or_else(|| serde::de::Error::custom("Invalid bits data"))
     }
 }
 
@@ -48,6 +46,19 @@ impl<'a, T: Deref<Target = [u8]>> From<&'a Bits<T>> for BitsRef<'a> {
     fn from(bits: &'a Bits<T>) -> Self {
         let used_bits = (bits.0).1;
         BitsRef::from_bytes((bits.0).0.deref(), used_bits).expect("Bits with invalid used_bits")
+    }
+}
+
+impl<'a> From<Bits<&'a [u8]>> for BitsRef<'a> {
+    fn from(bits: Bits<&'a [u8]>) -> Self {
+        let used_bits = (bits.0).1;
+        BitsRef::from_bytes((bits.0).0, used_bits).expect("Bits with invalid used_bits")
+    }
+}
+
+impl<'a> From<BitsRef<'a>> for Bits<&'a [u8]> {
+    fn from(bits: BitsRef<'a>) -> Self {
+        Bits(bits.into())
     }
 }
 
