@@ -76,7 +76,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         BitsRef::from(self).all_bytes()
     }
 
-    /// The number of bits used in the storage.
+    /// The number of bits in the storage.
     #[inline]
     pub fn len(&self) -> u64 {
         (self.0).1
@@ -100,7 +100,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` for out-of-bounds.
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(7), Some(false));
@@ -115,7 +115,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Count the set bits (*O(n)*).
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count_ones(), 14);
     /// assert_eq!(bits.count_zeros(), 1);
@@ -128,7 +128,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Count the unset bits (*O(n)*).
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.count_ones(), 14);
     /// assert_eq!(bits.count_zeros(), 1);
@@ -144,7 +144,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` it the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.len()).all(|idx|
     ///     bits.rank_ones(idx).unwrap()
@@ -167,7 +167,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// Returns `None` it the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert!((0..bits.len()).all(|idx|
     ///     bits.rank_ones(idx).unwrap()
@@ -193,7 +193,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// and `get(result) == Some(true)`.
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.select_ones(6), Some(6));
     /// assert_eq!(bits.select_ones(7), Some(8));
@@ -211,7 +211,7 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
     /// and `get(result) == Some(false)`.
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.select_ones(6), Some(6));
     /// assert_eq!(bits.select_ones(7), Some(8));
@@ -239,7 +239,7 @@ impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
     /// Returns an error if the index is out of bounds.
     ///
     /// ```
-    /// use indexed_bitvec::bits::Bits;
+    /// use indexed_bitvec::Bits;
     /// let mut bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
     /// assert_eq!(bits.get(0), Some(true));
     /// assert_eq!(bits.get(7), Some(false));

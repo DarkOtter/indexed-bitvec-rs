@@ -31,7 +31,7 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     ///
     /// This is an expensive operation which will examine
     /// all of the data input.
-    pub fn build_index(bits: Bits<T>) -> Self {
+    pub fn build_from_bits(bits: Bits<T>) -> Self {
         let index = {
             let bits_ref = BitsRef::from(&bits);
             let index = vec![0u64; index_raw::index_size_for(bits_ref)];
@@ -41,6 +41,14 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
             index
         };
         IndexedBits { index, bits }
+    }
+
+    /// Build an indexed bitvector from some bytes.
+    ///
+    /// This is the same as using `Bits::from_bytes`
+    /// and `IndexedBits::build_from_bits`
+    pub fn build_from_bytes(bytes: T, len: u64) -> Option<Self> {
+        Bits::from_bytes(bytes, len).map(IndexedBits::build_from_bits)
     }
 
     fn index(&self) -> &[u64] {
@@ -63,13 +71,52 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
         self.bits
     }
 
+    /// The number of bits in the storage.
+    #[inline]
+    pub fn len(&self) -> u64 {
+        self.bits.len()
+    }
+
+    /// Get the byte at a specific index.
+    ///
+    /// Returns `None` for out-of-bounds.
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.get(0), Some(true));
+    /// assert_eq!(bits.get(7), Some(false));
+    /// assert_eq!(bits.get(14), Some(true));
+    /// assert_eq!(bits.get(15), None);
+    /// ```
+    #[inline]
+    pub fn get(&self, idx_bits: u64) -> Option<bool> {
+        self.bits().get(idx_bits)
+    }
+
     /// Count the set bits (fast *O(1)*).
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.count_ones(), 14);
+    /// assert_eq!(bits.count_zeros(), 1);
+    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.len());
+    /// ```
     #[inline]
     pub fn count_ones(&self) -> u64 {
         index_raw::count_ones(self.index(), self.bits_ref())
     }
 
     /// Count the unset bits (fast *O(1)*).
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.count_ones(), 14);
+    /// assert_eq!(bits.count_zeros(), 1);
+    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.len());
+    /// ```
     #[inline]
     pub fn count_zeros(&self) -> u64 {
         index_raw::count_zeros(self.index(), self.bits_ref())
@@ -78,6 +125,22 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Count the set bits before a position in the bits (*O(1)*).
     ///
     /// Returns `None` it the index is out of bounds.
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert!((0..bits.len()).all(|idx|
+    ///     bits.rank_ones(idx).unwrap()
+    ///     + bits.rank_zeros(idx).unwrap()
+    ///     == (idx as u64)));
+    /// assert_eq!(bits.rank_ones(7), Some(7));
+    /// assert_eq!(bits.rank_zeros(7), Some(0));
+    /// assert_eq!(bits.rank_ones(8), Some(7));
+    /// assert_eq!(bits.rank_zeros(8), Some(1));
+    /// assert_eq!(bits.rank_ones(9), Some(8));
+    /// assert_eq!(bits.rank_zeros(9), Some(1));
+    /// assert_eq!(bits.rank_ones(15), None);
+    /// ```
     #[inline]
     pub fn rank_ones(&self, idx: u64) -> Option<u64> {
         index_raw::rank_ones(self.index(), self.bits_ref(), idx)
@@ -86,6 +149,22 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Count the unset bits before a position in the bits (*O(1)*).
     ///
     /// Returns `None` it the index is out of bounds.
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert!((0..bits.len()).all(|idx|
+    ///     bits.rank_ones(idx).unwrap()
+    ///     + bits.rank_zeros(idx).unwrap()
+    ///     == (idx as u64)));
+    /// assert_eq!(bits.rank_ones(7), Some(7));
+    /// assert_eq!(bits.rank_zeros(7), Some(0));
+    /// assert_eq!(bits.rank_ones(8), Some(7));
+    /// assert_eq!(bits.rank_zeros(8), Some(1));
+    /// assert_eq!(bits.rank_ones(9), Some(8));
+    /// assert_eq!(bits.rank_zeros(9), Some(1));
+    /// assert_eq!(bits.rank_ones(15), None);
+    /// ```
     #[inline]
     pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
         index_raw::rank_zeros(self.index(), self.bits_ref(), idx)
@@ -96,6 +175,15 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Returns `None` if no suitable bit is found. It is
     /// always the case otherwise that `rank_ones(result) == Some(target_rank)`
     /// and `get(result) == Some(true)`.
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.select_ones(6), Some(6));
+    /// assert_eq!(bits.select_ones(7), Some(8));
+    /// assert_eq!(bits.select_zeros(0), Some(7));
+    /// assert_eq!(bits.select_zeros(1), None);
+    /// ```
     #[inline]
     pub fn select_ones(&self, target_rank: u64) -> Option<u64> {
         index_raw::select_ones(self.index(), self.bits_ref(), target_rank)
@@ -106,6 +194,14 @@ impl<T: Deref<Target = [u8]>> IndexedBits<T> {
     /// Returns `None` if no suitable bit is found. It is
     /// always the case otherwise that `rank_zeros(result) == Some(target_rank)`
     /// and `get(result) == Some(false)`.
+    ///
+    /// ```
+    /// use indexed_bitvec::IndexedBits;
+    /// let bits = IndexedBits::build_from_bytes(vec![0xFE, 0xFE], 15).unwrap();
+    /// assert_eq!(bits.select_ones(6), Some(6));
+    /// assert_eq!(bits.select_ones(7), Some(8));
+    /// assert_eq!(bits.select_zeros(0), Some(7));
+    /// assert_eq!(bits.select_zeros(1), None);
     #[inline]
     pub fn select_zeros(&self, target_rank: u64) -> Option<u64> {
         index_raw::select_zeros(self.index(), self.bits_ref(), target_rank)
@@ -133,7 +229,7 @@ mod tests {
             (bits in gen_bits(byte_len))
              -> IndexedBits<Vec<u8>>
         {
-            IndexedBits::build_index(bits)
+            IndexedBits::build_from_bits(bits)
         }
     }
 
@@ -146,7 +242,7 @@ mod tests {
     proptest! {
         #[test]
         fn test_bits_refs_and_decompose(original_bits in gen_bits(0..=1024)) {
-            let indexed = IndexedBits::build_index(original_bits.clone());
+            let indexed = IndexedBits::build_from_bits(original_bits.clone());
             prop_assert_eq!(original_bits.clone_ref(), indexed.bits());
             prop_assert_eq!(BitsRef::from(&original_bits), indexed.bits_ref());
             prop_assert_eq!(original_bits, indexed.decompose());
@@ -154,7 +250,7 @@ mod tests {
     }
 
     fn from_bytes_or_panic<T: Deref<Target = [u8]>>(bytes: T, len: u64) -> IndexedBits<T> {
-        IndexedBits::build_index(Bits::from_bytes(bytes, len).expect("invalid bytes in test"))
+        IndexedBits::build_from_bits(Bits::from_bytes(bytes, len).expect("invalid bytes in test"))
     }
 
     // TODO: Test index bits
@@ -171,7 +267,7 @@ mod tests {
         assert_eq!(1178631, bits.len());
         assert_eq!(589316, bits.count_ones());
         assert_eq!(589315, bits.count_zeros());
-        let bits = IndexedBits::build_index(bits);
+        let bits = IndexedBits::build_from_bits(bits);
 
         let mut running_rank_ones = 0u64;
         let mut running_rank_zeros = 0u64;

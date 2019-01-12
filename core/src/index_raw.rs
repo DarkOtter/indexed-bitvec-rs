@@ -124,6 +124,11 @@ mod size {
             // This is needed as we assume only one sample can be in each L1 block
             assert!(SAMPLE_LENGTH >= BITS_PER_L1_BLOCK);
         }
+
+        #[test]
+        fn size_of_index_for_zero() {
+            assert_eq!(1, total_index_words(0));
+        }
     }
 }
 
@@ -372,7 +377,6 @@ pub fn build_index_for(bits: BitsRef, into: &mut [u64]) -> Result<(), IndexSizeE
     check_index_size(into, bits)?;
 
     if bits.len() == 0 {
-        debug_assert_eq!(0, into.len());
         return Ok(());
     }
 
