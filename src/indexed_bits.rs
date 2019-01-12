@@ -124,6 +124,23 @@ impl<T: core::ops::Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::collection::SizeRange;
+    use proptest::prelude::*;
+
+    prop_compose! {
+        fn gen_indexed_bits_inner(byte_len: SizeRange)
+            (bits in crate::bits::gen_bits(byte_len))
+             -> IndexedBits<Vec<u8>>
+        {
+            IndexedBits::build_index(bits)
+        }
+    }
+
+    pub fn gen_indexed_bits(
+        byte_len: impl Into<SizeRange>,
+    ) -> impl Strategy<Value = IndexedBits<Vec<u8>>> {
+        gen_indexed_bits_inner(byte_len.into())
+    }
 
     // TODO: Test index bits
     // TODO: Test serialisation
@@ -157,3 +174,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+pub use self::tests::gen_indexed_bits;

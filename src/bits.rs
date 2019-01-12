@@ -17,7 +17,7 @@
 use indexed_bitvec_core::bits_ref::BitsRef;
 use std::ops::Deref;
 
-/// Bits stored as a sequence of bytes (most significant bit first).
+/// A bitvector stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 #[serde(remote = "Self")]
 pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
@@ -267,6 +267,8 @@ impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
     }
 }
 
+// TODO: Implement push when T is Vec
+
 fn must_have_or_bug<T>(opt: Option<T>) -> T {
     opt.expect("If this is None there is a bug in Bits implementation")
 }
@@ -300,6 +302,7 @@ impl<T: Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf for Bi
     }
 }
 
+/// An iterator through individual bits of a bitvector.
 #[derive(Copy, Clone, Debug)]
 pub struct BitIterator<T: Deref<Target = [u8]>> {
     search_from: u64,
@@ -356,10 +359,11 @@ impl<T: Deref<Target = [u8]>> BitIterator<T> {
     }
 }
 
+/// An iterator through the one (set) bit indexes of a bitvector.
 #[derive(Copy, Clone, Debug)]
-pub struct SetBitIndexIterator<T: Deref<Target = [u8]>>(BitIterator<T>);
+pub struct OneBitIndexIterator<T: Deref<Target = [u8]>>(BitIterator<T>);
 
-impl<T: Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
+impl<T: Deref<Target = [u8]>> Iterator for OneBitIndexIterator<T> {
     type Item = u64;
 
     fn next(&mut self) -> Option<u64> {
@@ -371,6 +375,7 @@ impl<T: Deref<Target = [u8]>> Iterator for SetBitIndexIterator<T> {
     }
 }
 
+/// An iterator through the zero (unset) bit indexes of a bitvector.
 #[derive(Copy, Clone, Debug)]
 pub struct ZeroBitIndexIterator<T: Deref<Target = [u8]>>(BitIterator<T>);
 
@@ -403,12 +408,12 @@ impl<T: Deref<Target = [u8]>> Bits<T> {
         self.clone_ref().into_iter()
     }
 
-    pub fn into_iter_set_bits(self) -> SetBitIndexIterator<T> {
-        SetBitIndexIterator(self.into_iter())
+    pub fn into_iter_one_bits(self) -> OneBitIndexIterator<T> {
+        OneBitIndexIterator(self.into_iter())
     }
 
-    pub fn iter_set_bits(&self) -> SetBitIndexIterator<&[u8]> {
-        self.clone_ref().into_iter_set_bits()
+    pub fn iter_one_bits(&self) -> OneBitIndexIterator<&[u8]> {
+        self.clone_ref().into_iter_one_bits()
     }
 
     pub fn into_iter_zero_bits(self) -> ZeroBitIndexIterator<T> {
@@ -428,7 +433,7 @@ mod tests {
     use proptest::prelude::*;
 
     prop_compose! {
-        fn gen_bits(byte_len: impl Into<SizeRange>)
+        fn gen_bits_inner(byte_len: SizeRange)
             (data in gen_vec(any::<u8>(), byte_len))
             (used_bits in 0..=((data.len() as u64) * 8),
              data in Just(data))
@@ -436,6 +441,10 @@ mod tests {
         {
             Bits::from_bytes(data, used_bits).unwrap()
         }
+    }
+
+    pub fn gen_bits(byte_len: impl Into<SizeRange>) -> impl Strategy<Value = Bits<Vec<u8>>> {
+        gen_bits_inner(byte_len.into())
     }
 
     #[test]
@@ -824,12 +833,12 @@ mod tests {
         }
 
         #[test]
-        fn test_iter_and_into_iter_set_bits_via_get(bits in gen_bits(0..=1024)) {
+        fn test_iter_and_into_iter_one_bits_via_get(bits in gen_bits(0..=1024)) {
             let from_get: Vec<_> = (0..bits.used_bits())
                 .filter(|&idx| bits.get(idx).unwrap())
                 .collect();
-            let from_iter: Vec<_> = bits.iter_set_bits().collect();
-            let from_into_iter: Vec<_> = bits.into_iter_set_bits().collect();
+            let from_iter: Vec<_> = bits.iter_one_bits().collect();
+            let from_into_iter: Vec<_> = bits.into_iter_one_bits().collect();
             prop_assert_eq!(&from_get, &from_iter);
             prop_assert_eq!(&from_get, &from_into_iter);
         }
@@ -927,4 +936,8 @@ mod tests {
             prop_assert_eq!(original, deserialised);
         }
     }
+
 }
+
+#[cfg(test)]
+pub use self::tests::gen_bits;
