@@ -18,15 +18,15 @@ members = [ "core" ]
 
 [features]
 default = []
-implement_heapsize = ["heapsize", "indexed_bitvec_core/implement_heapsize"]
+implement_heapsize = ["heapsize"]
 
 [dependencies.indexed_bitvec_core]
 path = "core"
 version = "3"
 
 [dependencies]
-serde = { version = "1.0", default-features = false }
-serde_derive = { version = "1.0", default-features = false }
+serde = "1.0"
+serde_derive = "1.0"
 
 [dependencies.heapsize]
 optional = true
