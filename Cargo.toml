@@ -14,7 +14,7 @@ categories = ["algorithms", "data-structures"]
 travis-ci = { repository = "DarkOtter/indexed-bitvec-rs" }
 
 [workspace]
-members = [ "core" ]
+members = [ "core", "examples" ]
 
 [features]
 default = []

@@ -1,0 +1,18 @@
+[package]
+name = "indexed_bitvec_examples"
+version = "1.0.0"
+edition = "2018"
+description = "Example bitvectors used as additional tests for the indexed_bitvec package"
+repository = "https://github.com/DarkOtter/indexed-bitvec-rs"
+# It's also open-source, but shouldn't be published as it is only tests
+publish = false
+
+license = "Apache-2.0"
+authors = ["DarkOtter <>"]
+
+[dependencies.indexed_bitvec]
+version = "4"
+path = ".."
+
+[dev-dependencies]
+bincode = "1"
