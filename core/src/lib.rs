@@ -93,6 +93,13 @@ mod tests {
         assert_eq!(2, ceil_div(6, 4));
         assert_eq!(2, ceil_div(7, 4));
         assert_eq!(2, ceil_div(8, 4));
+
+        assert_eq!(ceil_div_slow(0, 43), ceil_div(0, 43));
+        assert_eq!(ceil_div_slow(1, 43), ceil_div(1, 43));
+        assert_eq!(
+            ceil_div_slow(usize::max_value(), 43),
+            ceil_div(usize::max_value(), 43)
+        );
     }
 
     #[test]
@@ -104,6 +111,13 @@ mod tests {
         assert_eq!(2, ceil_div_u64(6, 4));
         assert_eq!(2, ceil_div_u64(7, 4));
         assert_eq!(2, ceil_div_u64(8, 4));
+
+        assert_eq!(ceil_div_u64_slow(0, 43), ceil_div_u64(0, 43));
+        assert_eq!(ceil_div_u64_slow(1, 43), ceil_div_u64(1, 43));
+        assert_eq!(
+            ceil_div_u64_slow(u64::max_value(), 43),
+            ceil_div_u64(u64::max_value(), 43)
+        );
     }
 
     proptest! {
