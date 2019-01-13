@@ -224,18 +224,18 @@ mod tests {
     use proptest::collection::SizeRange;
     use proptest::prelude::*;
 
+    type Bitvec = IndexedBits<Vec<u8>>;
+
     prop_compose! {
         fn gen_indexed_bits_inner(byte_len: SizeRange)
             (bits in gen_bits(byte_len))
-             -> IndexedBits<Vec<u8>>
+             -> Bitvec
         {
             IndexedBits::build_from_bits(bits)
         }
     }
 
-    pub fn gen_indexed_bits(
-        byte_len: impl Into<SizeRange>,
-    ) -> impl Strategy<Value = IndexedBits<Vec<u8>>> {
+    pub fn gen_indexed_bits(byte_len: impl Into<SizeRange>) -> impl Strategy<Value = Bitvec> {
         gen_indexed_bits_inner(byte_len.into())
     }
 
@@ -253,8 +253,288 @@ mod tests {
         IndexedBits::build_from_bits(Bits::from_bytes(bytes, len).expect("invalid bytes in test"))
     }
 
-    // TODO: Test index bits
-    // TODO: Test serialisation
+    #[test]
+    fn test_basic_get() {
+        let example_data = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+        let max_len = 8 * 8;
+        for len in 0..=max_len {
+            let bits = from_bytes_or_panic(example_data.clone(), len);
+            for i in 0..len {
+                assert_eq!(Some(i / 8 == i % 8), bits.get(i));
+            }
+            for i in len..=(max_len + 1) {
+                assert_eq!(None, bits.get(i));
+            }
+        }
+
+        let example_data = vec![0xff, 0xc0];
+        let bits = from_bytes_or_panic(example_data.clone(), 10);
+        for i in 0..10 {
+            assert_eq!(bits.get(i), Some(true), "Differed at position {}", i)
+        }
+        for i in 10..16 {
+            assert_eq!(bits.get(i), None, "Differed at position {}", i)
+        }
+    }
+
+    #[test]
+    fn test_count_examples() {
+        let pattern_a = [0xff, 0xaau8];
+        let bytes_a = &pattern_a[..];
+        let make = |len: u64| from_bytes_or_panic(bytes_a, len);
+        assert_eq!(12, make(16).count_ones());
+        assert_eq!(4, make(16).count_zeros());
+        assert_eq!(12, make(15).count_ones());
+        assert_eq!(3, make(15).count_zeros());
+        assert_eq!(11, make(14).count_ones());
+        assert_eq!(3, make(14).count_zeros());
+        assert_eq!(11, make(13).count_ones());
+        assert_eq!(2, make(13).count_zeros());
+        assert_eq!(10, make(12).count_ones());
+        assert_eq!(2, make(12).count_zeros());
+        assert_eq!(10, make(11).count_ones());
+        assert_eq!(1, make(11).count_zeros());
+        assert_eq!(9, make(10).count_ones());
+        assert_eq!(1, make(10).count_zeros());
+        assert_eq!(9, make(9).count_ones());
+        assert_eq!(0, make(9).count_zeros());
+        assert_eq!(8, make(8).count_ones());
+        assert_eq!(0, make(8).count_zeros());
+        assert_eq!(7, make(7).count_ones());
+        assert_eq!(0, make(7).count_zeros());
+        assert_eq!(0, make(0).count_ones());
+        assert_eq!(0, make(0).count_zeros());
+    }
+
+    fn test_count_via_get(bits: Bitvec, bit_to_count: bool) -> Result<(), TestCaseError> {
+        fn inner<F>(bits: Bitvec, bit_to_count: bool, f: F) -> Result<(), TestCaseError>
+        where
+            F: Fn(&Bitvec) -> u64,
+        {
+            let count_via_get = (0..bits.len())
+                .filter(|&idx| bits.get(idx).unwrap() == bit_to_count)
+                .count() as u64;
+            prop_assert_eq!(count_via_get, f(&bits));
+            Ok(())
+        }
+
+        if bit_to_count {
+            inner(bits, true, IndexedBits::count_ones)
+        } else {
+            inner(bits, false, IndexedBits::count_zeros)
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_count_ones_via_get(bits in gen_indexed_bits(0..=1024)) {
+            test_count_via_get(bits, true)?;
+        }
+
+        #[test]
+        fn test_count_ones_via_iter(bits in gen_indexed_bits(0..=1024)) {
+            let count_via_iter =
+                bits.bits().iter()
+                .filter(|&b| b)
+                .count() as u64;
+            prop_assert_eq!(count_via_iter, bits.count_ones());
+
+        }
+
+        #[test]
+        fn test_count_zeros_via_get(bits in gen_indexed_bits(0..=1024)) {
+            test_count_via_get(bits, false)?;
+        }
+
+        #[test]
+        fn test_count_zeros_via_count_ones(bits in gen_indexed_bits(0..=1024)) {
+            prop_assert_eq!(bits.len() - bits.count_ones(), bits.count_zeros());
+        }
+
+    }
+
+    #[test]
+    fn test_rank_examples() {
+        let pattern_a = [0xff, 0xaau8];
+        let bytes_a = &pattern_a[..];
+        let make = |len: u64| from_bytes_or_panic(bytes_a, len);
+        let bits_a = make(16);
+        for i in 0..15 {
+            assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
+            assert_eq!(Some(make(i).count_zeros()), bits_a.rank_zeros(i));
+        }
+        assert_eq!(None, bits_a.rank_ones(16));
+        assert_eq!(None, bits_a.rank_zeros(16));
+        assert_eq!(None, make(13).rank_ones(13));
+        assert_eq!(None, make(13).rank_zeros(13));
+        assert_eq!(bits_a.rank_ones(12), make(13).rank_ones(12));
+        assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
+    }
+
+    fn test_rank_via_get(bits: Bitvec, bit_to_rank: bool) -> Result<(), TestCaseError> {
+        fn inner<F>(bits: Bitvec, bit_to_rank: bool, f: F) -> Result<(), TestCaseError>
+        where
+            F: Fn(&Bitvec, u64) -> Option<u64>,
+        {
+            let mut running_rank = 0;
+            for idx in 0..=(bits.len() + 64) {
+                if idx >= bits.len() {
+                    prop_assert_eq!(None, f(&bits, idx), "should be out of range at {}", idx);
+                } else {
+                    prop_assert_eq!(
+                        Some(running_rank),
+                        f(&bits, idx),
+                        "disagree at index {}",
+                        idx
+                    );
+                    if bits.get(idx).unwrap() == bit_to_rank {
+                        running_rank += 1;
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        if bit_to_rank {
+            inner(bits, true, IndexedBits::rank_ones)
+        } else {
+            inner(bits, false, IndexedBits::rank_zeros)
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_rank_ones_via_get(bits in gen_indexed_bits(0..=1024)) {
+            test_rank_via_get(bits, true)?;
+        }
+
+        #[test]
+        fn test_rank_ones_via_iter(bits in gen_indexed_bits(0..=1024)) {
+            let mut idx = 0u64;
+            let mut running_rank_ones = 0;
+            for b in bits.bits().iter() {
+                prop_assert_eq!(Some(running_rank_ones), bits.rank_ones(idx),
+                                "disagree at index {}", idx);
+                idx += 1;
+                if b { running_rank_ones += 1 };
+            }
+            prop_assert_eq!(None, bits.rank_ones(idx),
+                            "should be out of range at {}", idx);
+        }
+
+        #[test]
+        fn test_rank_zeros_via_get(bits in gen_indexed_bits(0..=1024)) {
+            test_rank_via_get(bits, false)?;
+        }
+
+        #[test]
+        fn test_rank_zeros_via_rank_ones(bits in gen_indexed_bits(0..=1024)) {
+            for idx in 0..=(bits.len() + 64) {
+                let via_rank_ones =
+                    bits.rank_ones(idx).map(|ones| idx - ones);
+                prop_assert_eq!(via_rank_ones, bits.rank_zeros(idx));
+            }
+        }
+    }
+
+    #[test]
+    fn test_select_examples() {
+        let pattern_a = [0xff, 0xaau8];
+        let bytes_a = &pattern_a[..];
+        let make = |len: u64| from_bytes_or_panic(bytes_a, len);
+        assert_eq!(Some(14), make(16).select_ones(11));
+        assert_eq!(None, make(14).select_ones(11));
+    }
+
+    fn test_select_via_count_rank_get(
+        bits: Bitvec,
+        bit_to_select: bool,
+    ) -> Result<(), TestCaseError> {
+        fn inner<C, R, S>(
+            bits: Bitvec,
+            bit_to_select: bool,
+            count: C,
+            rank: R,
+            select: S,
+        ) -> Result<(), TestCaseError>
+        where
+            C: Fn(&Bitvec) -> u64,
+            R: Fn(&Bitvec, u64) -> Option<u64>,
+            S: Fn(&Bitvec, u64) -> Option<u64>,
+        {
+            for bit_idx in 0..count(&bits) {
+                let select_idx = select(&bits, bit_idx);
+                prop_assert!(
+                    select_idx.is_some(),
+                    "expected bit_idx to exist: {}",
+                    bit_idx
+                );
+                let select_idx = select_idx.unwrap();
+                prop_assert_eq!(
+                    Some(bit_idx),
+                    rank(&bits, select_idx),
+                    "expected rank to be {} at {}",
+                    bit_idx,
+                    select_idx
+                );
+                prop_assert_eq!(
+                    Some(bit_to_select),
+                    bits.get(select_idx),
+                    "expected bit to be {} at {}",
+                    bit_to_select,
+                    select_idx
+                );
+            }
+
+            prop_assert_eq!(
+                None,
+                select(&bits, count(&bits)),
+                "expected no selected rank for count"
+            );
+
+            Ok(())
+        }
+
+        if bit_to_select {
+            inner(
+                bits,
+                true,
+                IndexedBits::count_ones,
+                IndexedBits::rank_ones,
+                IndexedBits::select_ones,
+            )
+        } else {
+            inner(
+                bits,
+                false,
+                IndexedBits::count_zeros,
+                IndexedBits::rank_zeros,
+                IndexedBits::select_zeros,
+            )
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_select_ones_via_count_rank_get(bits in gen_indexed_bits(0..=1024)) {
+            test_select_via_count_rank_get(bits, true)?;
+        }
+
+        #[test]
+        fn test_select_zeros_via_count_rank_get(bits in gen_indexed_bits(0..=1024)) {
+            test_select_via_count_rank_get(bits, false)?;
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_serialise_roundtrip(original in gen_indexed_bits(0..=1024)) {
+            let serialised = bincode::serialize(&original).unwrap();
+            let deserialised: Bitvec = bincode::deserialize(&serialised).unwrap();
+            prop_assert_eq!(original.bits(), deserialised.bits());
+            prop_assert_eq!(original.index, deserialised.index);
+        }
+    }
 
     #[test]
     fn test_succinct_trie_bitvec() {
