@@ -28,7 +28,6 @@ extern crate heapsize;
 #[cfg(test)]
 extern crate quickcheck;
 #[cfg(test)]
-#[macro_use]
 extern crate proptest;
 #[cfg(test)]
 extern crate bincode;

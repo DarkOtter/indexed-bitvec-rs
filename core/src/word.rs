@@ -207,7 +207,7 @@ mod tests {
             u64::arbitrary(g).into()
         }
 
-        fn shrink(&self) -> Box<Iterator<Item = Self>> {
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
             let base = u64::from(*self).shrink();
             Box::new(base.map(|x| x.into()))
         }

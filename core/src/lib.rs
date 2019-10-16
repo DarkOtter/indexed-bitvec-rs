@@ -31,7 +31,6 @@ extern crate rand_xorshift;
 extern crate quickcheck;
 
 #[cfg(test)]
-#[macro_use]
 extern crate proptest;
 
 #[cold]
