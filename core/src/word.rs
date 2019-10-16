@@ -45,7 +45,11 @@ impl Word {
     /// Check that an index is in bounds.
     #[inline]
     fn index_check(self, idx: usize) -> Option<()> {
-        if idx >= self.len() { None } else { Some(()) }
+        if idx >= self.len() {
+            None
+        } else {
+            Some(())
+        }
     }
 
     /// Get a single bit by index.
@@ -198,9 +202,9 @@ impl Word {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck::Arbitrary;
     use std::boxed::Box;
     use std::vec::Vec;
-    use quickcheck::Arbitrary;
 
     impl Arbitrary for Word {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {

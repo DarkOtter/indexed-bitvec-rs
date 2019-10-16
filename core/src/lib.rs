@@ -130,5 +130,4 @@ mod tests {
             prop_assert_eq!(ceil_div_u64_slow(x, d), ceil_div_u64(x, d));
         }
     }
-
 }

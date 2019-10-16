@@ -26,11 +26,11 @@ extern crate indexed_bitvec_core;
 extern crate heapsize;
 
 #[cfg(test)]
-extern crate quickcheck;
+extern crate bincode;
 #[cfg(test)]
 extern crate proptest;
 #[cfg(test)]
-extern crate bincode;
+extern crate quickcheck;
 
 pub mod bits;
 pub use crate::bits::Bits;

@@ -1001,7 +1001,6 @@ mod tests {
             prop_assert_eq!(original, deserialised);
         }
     }
-
 }
 
 #[cfg(test)]
