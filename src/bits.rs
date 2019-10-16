@@ -262,9 +262,9 @@ impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
         } else {
             let data = self.all_bytes_mut();
             let byte_idx = (idx_bits / 8) as usize;
-            let idx_in_byte = (idx_bits % 8) as usize;
+            let idx_in_byte = (idx_bits % 8) as u8;
 
-            let mask = 0x80 >> idx_in_byte;
+            let mask = 0x80u8 >> idx_in_byte;
 
             if to {
                 data[byte_idx] |= mask

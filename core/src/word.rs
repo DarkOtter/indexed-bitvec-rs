@@ -58,7 +58,7 @@ impl Word {
     #[inline]
     pub fn get(self, idx: usize) -> Option<bool> {
         self.index_check(idx)?;
-        Some((u64::from(self) & (1 << (63 - idx))) > 0)
+        Some((u64::from(self) & (1u64 << (63 - idx) as u64)) > 0)
     }
 
     /// Set a single bit by creating a new word.
@@ -66,7 +66,7 @@ impl Word {
     /// Returns `None` if the index is out of bounds.
     pub fn set_copy(self, idx: usize, to: bool) -> Option<Self> {
         self.index_check(idx)?;
-        let mask = 1 << (63 - idx);
+        let mask = 1u64 << (63 - idx) as u64;
         let int = u64::from(self);
         let res = if to { int | mask } else { int & (!mask) };
         Some(res.into())
@@ -140,7 +140,7 @@ impl Word {
             return Some(0);
         };
         self.index_check(idx)?;
-        let to_count = u64::from(self) >> (64 - idx);
+        let to_count = u64::from(self) >> (64 - idx) as u64;
         Some(to_count.count_ones())
     }
 
@@ -246,9 +246,9 @@ mod tests {
             assert_eq!(x, (i & 1) > 0, "Bit {} was wrong", i);
         }
 
-        for shift in 0..Word::from(0).len() {
-            for (i, x) in get_bits(0x8000000000000000 >> shift) {
-                assert_eq!(x, i == shift, "Bit {} was wrong", i);
+        for shift in 0..(Word::from(0).len() as u64) {
+            for (i, x) in get_bits(0x8000000000000000u64 >> shift) {
+                assert_eq!(x, i as u64 == shift, "Bit {} was wrong", i);
             }
         }
     }
