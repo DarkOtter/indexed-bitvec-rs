@@ -11,7 +11,7 @@ license = "Apache-2.0"
 authors = ["DarkOtter <>"]
 
 [dependencies.indexed_bitvec]
-version = "4"
+version = "5.0"
 path = ".."
 
 [dev-dependencies]
