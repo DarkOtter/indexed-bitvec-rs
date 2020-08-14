@@ -1,5 +1,5 @@
 /*
-   Copyright 2018 DarkOtter
+   Copyright 2020 DarkOtter
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -18,92 +18,109 @@ use crate::ones_or_zeros::OnesOrZeros;
 use crate::word::{select_ones_u16, Word};
 
 #[inline]
-pub(crate) fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
+pub unsafe fn get_unchecked(data: &[u8], idx_bits: u64) -> bool {
     let byte_idx = (idx_bits / 8) as usize;
     let idx_in_byte = (idx_bits % 8) as usize;
 
-    let byte = data[byte_idx];
+    debug_assert!(data.get(byte_idx).is_some());
+    let byte = data.get_unchecked(byte_idx);
     let mask = 0x80 >> idx_in_byte;
     (byte & mask) != 0
 }
 
 #[cfg(test)]
-fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
+pub fn get(data: &[u8], idx_bits: u64) -> Option<bool> {
     let byte_idx = idx_bits / 8;
     if byte_idx >= data.len() as u64 {
         None
     } else {
-        Some(get_unchecked(data, idx_bits))
+        Some(unsafe { get_unchecked(data, idx_bits) })
     }
 }
 
-fn bytes_as_u64s(data: &[u8]) -> Result<(&[u8], &[u64], &[u8]), &[u8]> {
-    use core::mem::{align_of, size_of};
+fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
+    const WORD_ALIGNMENT: usize = core::mem::align_of::<u64>();
+    const WORD_SIZE: usize = core::mem::size_of::<u64>();
 
-    if data.len() < size_of::<u64>() || data.len() < align_of::<u64>() {
-        return Err(data);
+    let total_bytes = data.len();
+    if total_bytes < WORD_ALIGNMENT {
+        return (data, &[], &[]);
     }
 
     // For actually casting we must match alignment
-    let alignment_offset = {
-        let need_alignment = align_of::<u64>();
-        let rem = (data.as_ptr() as usize) % need_alignment;
-        if rem > 0 {
-            need_alignment - rem
+    let words_start = {
+        let rem = (data.as_ptr() as usize) % WORD_ALIGNMENT;
+        if rem != 0 {
+            WORD_ALIGNMENT - rem
         } else {
             0
         }
     };
 
-    let (pre_partial, data) = data.split_at(alignment_offset);
+    debug_assert!(total_bytes > words_start);
+    let n_words = total_bytes.wrapping_sub(words_start) / WORD_SIZE;
+    let words_end = words_start + n_words * WORD_SIZE;
 
-    let n_whole_words = data.len() / size_of::<u64>();
+    debug_assert!(
+        words_start <= data.len() && words_end <= data.len() && total_bytes == data.len()
+    );
+    let first_part = unsafe { data.get_unchecked(0..words_start) };
+    let words_part = unsafe { data.get_unchecked(words_start..words_end) };
+    let last_part = unsafe { data.get_unchecked(words_end..total_bytes) };
 
-    let (data, post_partial) = data.split_at(n_whole_words * size_of::<u64>());
-
-    let data: &[u64] = unsafe {
+    let words: &[u64] = unsafe {
         use core::slice::from_raw_parts;
-        let ptr = data.as_ptr() as *const u64;
-        from_raw_parts(ptr, n_whole_words)
+        debug_assert_eq!((words_part.as_ptr() as usize) % WORD_ALIGNMENT, 0);
+        let ptr = words_part.as_ptr() as *const u64;
+        from_raw_parts(ptr, n_words)
     };
 
-    Ok((pre_partial, data, post_partial))
+    (first_part, words, last_part)
 }
+
+const MIN_SIZE_TO_SPLIT_WORDS: usize = 16 * core::mem::size_of::<u64>();
 
 fn count_ones_with<T: Copy, F: Fn(T) -> u32>(data: &[T], count_ones: F) -> u64 {
     data.iter().map(|&x| count_ones(x) as u64).sum::<u64>()
 }
 
-fn count_ones_bytes_slow(data: &[u8]) -> u64 {
+fn count_ones_by_bytes(data: &[u8]) -> u64 {
     count_ones_with(data, <u8>::count_ones)
 }
 
-fn count_ones_words(data: &[u64]) -> u64 {
+fn count_ones_by_words(data: &[u64]) -> u64 {
     count_ones_with(data, <u64>::count_ones)
 }
 
 pub fn count_ones(data: &[u8]) -> u64 {
-    match bytes_as_u64s(data) {
-        Err(data) => count_ones_bytes_slow(data),
-        Ok((pre_partial, data, post_partial)) => {
-            count_ones_bytes_slow(pre_partial)
-                + count_ones_words(data)
-                + count_ones_bytes_slow(post_partial)
-        }
+    if data.len() >= MIN_SIZE_TO_SPLIT_WORDS {
+        let (pre_partial, words, post_partial) = bytes_as_u64s(data);
+        count_ones_by_bytes(pre_partial)
+            + count_ones_by_words(words)
+            + count_ones_by_bytes(post_partial)
+    } else {
+        count_ones_by_bytes(data)
     }
 }
 
-pub fn rank_ones(data: &[u8], idx_bits: u64) -> Option<u64> {
-    let full_bytes = idx_bits / 8;
-    if full_bytes >= data.len() as u64 {
-        return None;
-    }
+pub unsafe fn count_ones_upto_unchecked(data: &[u8], idx_bits: u64) -> u64 {
+    let full_bytes = (idx_bits / 8) as usize;
+    let mut count_so_far = count_ones(data.get_unchecked(..full_bytes));
 
-    let full_bytes = full_bytes as usize;
     let rem = idx_bits % 8;
-    let full_bytes_count = count_ones(&data[..full_bytes]);
-    let rem_count = (!((!0u8) >> rem) & data[full_bytes]).count_ones();
-    Some(full_bytes_count + rem_count as u64)
+    if rem != 0 {
+        let partial_byte = data.get_unchecked(full_bytes);
+        count_so_far += (!((!0u8) >> rem) & partial_byte).count_ones() as u64;
+    }
+    count_so_far
+}
+
+pub fn count_ones_upto(data: &[u8], idx_bits: u64) -> Option<u64> {
+    if indx_bits <= (data.len() as u64) * 8 {
+        Some(unsafe { count_ones_upto_unchecked(data, idx_bits) })
+    } else {
+        None
+    }
 }
 
 /// Select a bit by rank within bytes one byte at a time, or return the total count.
@@ -130,22 +147,15 @@ fn select_by_bytes<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64,
     Err(running_rank)
 }
 
-pub fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
-    let split_res = bytes_as_u64s(data);
+pub(crate) fn select<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Option<u64> {
+    if data.len() < MIN_SIZE_TO_SPLIT_WORDS {
+        return select_by_bytes::<W>(data, target_rank).ok();
+    }
 
-    let pre_partial = match split_res {
-        Err(data) => data,
-        Ok((pre, _, _)) => pre,
-    };
-
+    let (pre_partial, data, post_partial) = bytes_as_u64s(data);
     let pre_partial_count = match select_by_bytes::<W>(pre_partial, target_rank) {
         Ok(res) => return Some(res),
         Err(count) => count,
-    };
-
-    let (data, post_partial) = match split_res {
-        Err(_) => return None,
-        Ok((_, data, post)) => (data, post),
     };
 
     let mut running_rank = pre_partial_count;
@@ -199,7 +209,7 @@ mod tests {
     }
 
     quickcheck! {
-        fn test_count(data: Vec<u8>) -> bool {
+        fn test_count_ones(data: Vec<u8>) -> bool {
             let mut expected_count_ones = 0u64;
             let mut expected_count_zeros = 0u64;
 
@@ -232,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rank() {
+    fn test_count_ones_upto() {
         let data = random_data();
 
         let mut expected_rank_ones = 0u64;
@@ -243,7 +253,7 @@ mod tests {
             let bits = bits_of_byte(byte);
             for (bit_idx, bit) in bits.iter().cloned().enumerate() {
                 let bit_idx = bit_idx as u64;
-                let rank_ones = rank_ones(&data, byte_idx * 8 + bit_idx);
+                let rank_ones = count_ones_upto(&data, byte_idx * 8 + bit_idx);
                 assert_eq!(Some(expected_rank_ones), rank_ones);
                 let rank_zeros =
                     ZeroBits::convert_count(rank_ones.unwrap(), byte_idx * 8 + bit_idx);
@@ -256,6 +266,13 @@ mod tests {
                 }
             }
         }
+
+        let len_bits = data.len() as u64 * 8;
+        let rank_ones = count_ones_upto(&data, len_bits);
+        assert_eq!(Some(expected_rank_ones), rank_ones);
+        let rank_zeros =
+            ZeroBits::convert_count(rank_ones.unwrap(), len_bits);
+        assert_eq!(expected_rank_zeros, rank_zeros);
     }
 
     fn do_test_select<W: OnesOrZeros>(data: &Vec<u8>) {
@@ -263,8 +280,9 @@ mod tests {
         for i in 0..total_count {
             let i = i as u64;
             let r = select::<W>(&data, i).expect("Already checked in-bounds");
-            let rank = W::convert_count(rank_ones(&data, r).unwrap(), r);
+            let rank = W::convert_count(count_ones_upto(&data, r).unwrap(), r);
             assert_eq!(i, rank);
+            assert_eq!(Some(W::is_ones()), get(&data, r));
         }
         assert_eq!(None, select::<W>(&data, total_count as u64));
     }

@@ -34,8 +34,8 @@ extern crate quickcheck;
 extern crate proptest;
 
 #[cold]
-fn ceil_div_slow(n: usize, d: usize) -> usize {
-    n / d + (if n % d > 0 { 1 } else { 0 })
+const fn ceil_div_slow(n: usize, d: usize) -> usize {
+    n / d + ((n % d > 0) as usize)
 }
 
 #[inline(always)]
@@ -48,8 +48,8 @@ pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
 }
 
 #[cold]
-fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
-    n / d + (if n % d > 0 { 1 } else { 0 })
+const fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
+    n / d + ((n % d > 0) as u64)
 }
 
 #[inline(always)]
