@@ -270,8 +270,7 @@ mod tests {
         let len_bits = data.len() as u64 * 8;
         let rank_ones = count_ones_upto(&data, len_bits);
         assert_eq!(Some(expected_rank_ones), rank_ones);
-        let rank_zeros =
-            ZeroBits::convert_count(rank_ones.unwrap(), len_bits);
+        let rank_zeros = ZeroBits::convert_count(rank_ones.unwrap(), len_bits);
         assert_eq!(expected_rank_zeros, rank_zeros);
     }
 

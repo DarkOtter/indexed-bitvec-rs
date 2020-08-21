@@ -21,8 +21,8 @@
 //! to slices. They should all be memory-safe though.
 
 use super::bits_ref::BitsRef;
+use super::ceil_div_u64;
 use super::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
-use super::{ceil_div_u64};
 
 mod size {
     use super::*;
