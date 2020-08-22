@@ -20,9 +20,9 @@
 //! so you may run into panics from e.g. out of bounds accesses
 //! to slices. They should all be memory-safe though.
 
-use super::bits_ref::BitsRef;
-use super::ceil_div_u64;
-use super::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
+use crate::bits_ref::BitsRef;
+use crate::ceil_div_u64;
+use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
 
 mod size {
     use super::*;
@@ -30,10 +30,6 @@ mod size {
     pub const BITS_PER_L0_BLOCK: u64 = 1 << 32;
     pub const BITS_PER_L1_BLOCK: u64 = BITS_PER_L2_BLOCK * 4;
     pub const BITS_PER_L2_BLOCK: u64 = 512;
-
-    pub const BYTES_PER_L0_BLOCK: usize = (BITS_PER_L0_BLOCK / 8) as usize;
-    pub const BYTES_PER_L1_BLOCK: usize = (BITS_PER_L1_BLOCK / 8) as usize;
-    pub const BYTES_PER_L2_BLOCK: usize = (BITS_PER_L2_BLOCK / 8) as usize;
 
     pub fn l0(total_bits: u64) -> usize {
         ceil_div_u64(total_bits, BITS_PER_L0_BLOCK) as usize
@@ -43,17 +39,7 @@ mod size {
         ceil_div_u64(total_bits, BITS_PER_L1_BLOCK) as usize
     }
 
-    pub fn blocks(total_bits: u64) -> usize {
-        ceil_div_u64(total_bits, BITS_PER_L2_BLOCK) as usize
-    }
-
-    pub fn total_index_words(total_bits: u64) -> usize {
-        l0(total_bits) + l1l2(total_bits)
-    }
-
     pub const L1_BLOCKS_PER_L0_BLOCK: usize = (BITS_PER_L0_BLOCK / BITS_PER_L1_BLOCK) as usize;
-    pub const L2_BLOCKS_PER_L1_BLOCK: usize = (BITS_PER_L1_BLOCK / BITS_PER_L2_BLOCK) as usize;
-    pub const L2_BLOCKS_PER_L0_BLOCK: usize = L2_BLOCKS_PER_L1_BLOCK * L1_BLOCKS_PER_L0_BLOCK;
 
     #[cfg(test)]
     mod tests {
@@ -79,11 +65,6 @@ mod size {
         fn block_sizes_evenly_divide() {
             assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L1_BLOCK, 0);
             assert_eq!(BITS_PER_L1_BLOCK % BITS_PER_L2_BLOCK, 0);
-        }
-
-        #[test]
-        fn size_of_index_for_zero() {
-            assert_eq!(0, total_index_words(0));
         }
     }
 }
@@ -148,7 +129,7 @@ impl Default for L1L2Entry {
 
 impl L1L2Entry {
     fn pack_raw(items: [u32; 4]) -> Option<Self> {
-        if items[1..].any(|&x| x >= 0x0400) {
+        if items[1..].iter().any(|&x| x >= 0x0400) {
             None
         } else {
             Some(Self(
@@ -192,7 +173,15 @@ pub struct IndexedBits<'a> {
     data: BitsRef<'a>,
 }
 
-struct IndexSizeError;
+fn zip_eq<L, R>(left: L, right: R) -> core::iter::Zip<L, R>
+where L: core::iter::ExactSizeIterator,
+R: core::iter::ExactSizeIterator,
+{
+    debug_assert_eq!(left.len(), right.len(), "Iterators are expected to have the same length");
+    left.zip(right)
+}
+
+pub struct IndexSizeError;
 
 fn build_index<'a, 'b>(
     l0_index: &'a mut [L0Entry],
@@ -204,9 +193,7 @@ fn build_index<'a, 'b>(
             .chunks(size::BITS_PER_L1_BLOCK)
             .expect("The chunk size should not be zero");
         debug_assert_eq!(l1l2_index_part.len(), l1_chunks.len());
-        l1l2_index_part
-            .iter_mut()
-            .zip_eq(l1_chunks)
+        zip_eq(l1l2_index_part.iter_mut(), l1_chunks)
             .for_each(|(entry, data_part)| {
                 let mut parts = [0; 4];
                 let l2_chunks = data_part
@@ -232,6 +219,7 @@ fn build_index<'a, 'b>(
             ranks.0[1] = ranks.0[0] + part_counts[0];
             ranks.0[2] = ranks.0[1] + part_counts[1];
             ranks.0[3] = ranks.0[2] + part_counts[2];
+            *entry = L1L2Entry::pack(ranks).expect("All of the counts should be small enough");
             running_total = ranks.0[3] as u64 + part_counts[3] as u64;
         });
         running_total as u64
@@ -251,11 +239,7 @@ fn build_index<'a, 'b>(
     let l0_data_chunks = data
         .chunks(size::BITS_PER_L0_BLOCK)
         .expect("The chunk size should not be zero");
-    debug_assert_eq!(l0_index.len(), l0_data_chunks.len());
-    debug_assert_eq!(l0_index.len(), l0_l1l2_chunks.len());
-    l0_index
-        .iter_mut()
-        .zip_eq(l0_l1l2_chunks.zip_eq(l0_data_chunks))
+    zip_eq(l0_index.iter_mut(), zip_eq(l0_l1l2_chunks, l0_data_chunks))
         .for_each(|(write_count, (l1l2_part, data_part))| {
             *write_count = L0Entry(build_l1(l1l2_part, data_part))
         });
@@ -344,11 +328,7 @@ impl<'a> IndexedBits<'a> {
         data: BitsRef<'a>,
     ) -> Result<Self, IndexSizeError> {
         let (l0_index, l1l2_index) = build_index(l0_index_space, l1l2_index_space, data)?;
-        Ok(Self {
-            l0_index,
-            l1l2_index,
-            data,
-        })
+        Ok(unsafe { Self::from_existing_index(l0_index, l1l2_index, data) })
     }
 
     pub fn len(&self) -> u64 {
@@ -387,14 +367,17 @@ impl<'a> IndexedBits<'a> {
             };
             let l1l2_rank = {
                 let l1_idx = l1_idx.wrapping_add(l0_idx * size::L1_BLOCKS_PER_L0_BLOCK);
-                debug_assert!(self.l1l2_index.get(l1_idx));
+                debug_assert!(self.l1l2_index.get(l1_idx).is_some());
                 let l1l2_entry = *unsafe { self.l1l2_index.get_unchecked(l1_idx) };
                 let l2_index = l1l2_entry.unpack();
                 debug_assert!(l2_index.0.get(l2_idx).is_some());
                 *unsafe { l2_index.0.get_unchecked(l2_idx as usize) }
             };
-            let within_l2_data = unsafe { self.data.get_unchecked_slice(l2_block_start_idx..idx) };
-            l0_rank + l1l2_rank as u64 + within_l2_data.count_ones()
+            let within_l2_data =
+                self.data.slice(l2_block_start_idx..idx)
+                    .expect("If the indexes are not in range it's a bug")
+                ;
+            Some(l0_rank + l1l2_rank as u64 + within_l2_data.count_ones())
         }
     }
 
@@ -462,11 +445,16 @@ impl<'a> IndexedBits<'a> {
         skip_count_ones += l2_index.0[l2_idx] as u64;
         let skip_count = W::convert_count(skip_count_ones, skip_bits);
 
-        let (_skipped, select_in) = self.data.split_at(skip_bits);
-        select_in.select::<W>(
+        let (_skipped, select_in) = self.data.split_at(skip_bits).expect("If it's out of range that's a bug");
+        let new_target =
+
             rank.checked_sub(skip_count)
-                .expect("Shouldn't have skipped too much"),
-        )
+                .expect("Shouldn't have skipped too much");
+        if W::is_ones() {
+            select_in.select_ones(new_target)
+        } else {
+            select_in.select_zeros(new_target)
+        }
     }
 
     pub fn select_ones(&self, rank: u64) -> Option<u64> {
@@ -481,6 +469,7 @@ impl<'a> IndexedBits<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bits_ref::Bits;
     use std::vec::Vec;
 
     impl IndexSize {
@@ -498,7 +487,7 @@ mod tests {
         // When the bit we are selecting is in the same block as the next index sample
         let mut data = vec![0xffu8; 8192 / 8 * 2];
         data[8192 / 8 - 1] = 0;
-        let data = BitsRef::from_bytes(&data[..], 0, 8192 * 2).unwrap();
+        let data = Bits::from_bytes(&data[..], 0, 8192 * 2).unwrap();
         let size = IndexSize::for_bits(data);
         let mut l0 = size.l0_vec();
         let mut l1l2 = size.l1l2_vec();
@@ -521,7 +510,7 @@ mod tests {
             rng.fill_bytes(&mut data);
             data
         };
-        let data = BitsRef::from_bytes(&data[..], 0, n_bits).expect("Should have enough bytes");
+        let data = Bits::from_bytes(&data[..], 0, n_bits).expect("Should have enough bytes");
         let size = IndexSize::for_bits(data);
         let mut l0 = size.l0_vec();
         let mut l1l2 = size.l1l2_vec();

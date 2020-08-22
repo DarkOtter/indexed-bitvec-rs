@@ -16,6 +16,8 @@
 //! Tools for working with a single (64bit) word as bits.
 use crate::ones_or_zeros::{OnesOrZeros, ZeroBits};
 
+// TODO: Go through and refresh this file
+
 /// The 64 bits of a single word, as a sequence from MSB to LSB.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Word(u64);

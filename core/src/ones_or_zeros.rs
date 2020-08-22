@@ -36,6 +36,7 @@ pub trait OnesOrZeros: private::Sealed {
 
     fn is_ones() -> bool;
 
+    // TODO: Can we just remove count?
     /// Either count_ones or count_zeros.
     fn count(of_bits: u64) -> u32;
 }

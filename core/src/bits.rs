@@ -39,17 +39,17 @@ fn sub_should_not_overflow(a: u64, b: u64) -> u64 {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-struct AllBitsRef<'a>(&'a [u8]);
+struct AllBits<T>(T);
 
-impl From<&[u8]> for AllBitsRef {
-    fn from(bytes: &[u8]) -> Self {
+impl<'a> From<&'a [u8]> for AllBits<&'a [u8]> {
+    fn from(bytes: &'a [u8]) -> Self {
         Self(bytes)
     }
 }
 
-impl From<AllBitsRef> for &[u8] {
-    fn from(bits: BitsRef) -> Self {
-        bits.0
+impl<'a> From<&'a mut [u8]> for AllBits<&'a mut [u8]> {
+    fn from(bytes: &'a mut [u8]) -> Self {
+        Self(bytes)
     }
 }
 
@@ -57,13 +57,60 @@ fn split_idx(idx_bits: u64) -> (usize, usize) {
     ((idx_bits / 8) as usize, (idx_bits % 8) as usize)
 }
 
-impl AllBitsRef<'static> {
+const EMPTY_BYTES: &'static [u8] = &[];
+
+impl AllBits<&'static [u8]> {
     pub const fn empty() -> Self {
-        Self(&[])
+        Self(EMPTY_BYTES)
     }
 }
+fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
+    const WORD_ALIGNMENT: usize = core::mem::align_of::<u64>();
+    const WORD_SIZE: usize = core::mem::size_of::<u64>();
 
-impl<'a> AllBitsRef<'a> {
+    let total_bytes = data.len();
+    if total_bytes < WORD_ALIGNMENT {
+        return (data, &[], &[]);
+    }
+
+    // For actually casting we must match alignment
+    let words_start = {
+        let rem = (data.as_ptr() as usize) % WORD_ALIGNMENT;
+        if rem != 0 {
+            WORD_ALIGNMENT - rem
+        } else {
+            0
+        }
+    };
+
+    debug_assert!(total_bytes.checked_sub(words_start).is_some());
+    let n_words = total_bytes.wrapping_sub(words_start) / WORD_SIZE;
+    debug_assert!(n_words >= 1);
+    let words_end = words_start + n_words * WORD_SIZE;
+
+    let first_range = 0..words_start;
+    let words_range = words_start..words_end;
+    let last_range = words_end..total_bytes;
+    debug_assert!(data.get(first_range.clone()).is_some());
+    debug_assert!(data.get(words_range.clone()).is_some());
+    debug_assert!(data.get(last_range.clone()).is_some());
+    let first_part = unsafe { data.get_unchecked(first_range) };
+    let words_part = unsafe { data.get_unchecked(words_range) };
+    let last_part = unsafe { data.get_unchecked(last_range) };
+
+    let words: &[u64] = unsafe {
+        use core::slice::from_raw_parts;
+        debug_assert_eq!((words_part.as_ptr() as usize) % WORD_ALIGNMENT, 0);
+        let ptr = words_part.as_ptr() as *const u64;
+        from_raw_parts(ptr, n_words)
+    };
+
+    (first_part, words, last_part)
+}
+
+const MIN_SIZE_TO_SPLIT_WORDS: usize = 16 * core::mem::size_of::<u64>();
+
+impl<'a> AllBits<&'a [u8]> {
     #[inline]
     pub fn len(self) -> u64 {
         self.0.len() as u64 * 8
@@ -92,52 +139,6 @@ impl<'a> AllBitsRef<'a> {
     }
 
     pub fn count_ones(self) -> u64 {
-        fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
-            const WORD_ALIGNMENT: usize = core::mem::align_of::<u64>();
-            const WORD_SIZE: usize = core::mem::size_of::<u64>();
-
-            let total_bytes = data.len();
-            if total_bytes < WORD_ALIGNMENT {
-                return (data, &[], &[]);
-            }
-
-            // For actually casting we must match alignment
-            let words_start = {
-                let rem = (data.as_ptr() as usize) % WORD_ALIGNMENT;
-                if rem != 0 {
-                    WORD_ALIGNMENT - rem
-                } else {
-                    0
-                }
-            };
-
-            debug_assert!(total_bytes.checked_sub(words_start).is_some());
-            let n_words = total_bytes.wrapping_sub(words_start) / WORD_SIZE;
-            debug_assert!(n_words >= 1);
-            let words_end = words_start + n_words * WORD_SIZE;
-
-            let first_range = 0..words_start;
-            let words_range = words_start..words_end;
-            let last_range = words_end..total_bytes;
-            debug_assert!(data.get(first_range.clone()).is_some());
-            debug_assert!(data.get(words_range.clone()).is_some());
-            debug_assert!(data.get(last_range.clone()).is_some());
-            let first_part = unsafe { data.get_unchecked(first_range) };
-            let words_part = unsafe { data.get_unchecked(words_range) };
-            let last_part = unsafe { data.get_unchecked(last_range) };
-
-            let words: &[u64] = unsafe {
-                use core::slice::from_raw_parts;
-                debug_assert_eq!((words_part.as_ptr() as usize) % WORD_ALIGNMENT, 0);
-                let ptr = words_part.as_ptr() as *const u64;
-                from_raw_parts(ptr, n_words)
-            };
-
-            (first_part, words, last_part)
-        }
-
-        const MIN_SIZE_TO_SPLIT_WORDS: usize = 16 * core::mem::size_of::<u64>();
-
         fn count_ones_with<T: Copy, F: Fn(T) -> u32>(data: &[T], count_ones: F) -> u64 {
             data.iter().map(|&x| count_ones(x) as u64).sum::<u64>()
         }
@@ -162,6 +163,8 @@ impl<'a> AllBitsRef<'a> {
     }
 
     fn select<W: OnesOrZeros>(self, target_rank: u64) -> Option<u64> {
+        use crate::word::Word;
+
         /// Select a bit by rank within bytes one byte at a time, or return the total count.
         fn select_by_bytes<W: OnesOrZeros>(data: &[u8], target_rank: u64) -> Result<u64, u64> {
             let mut running_rank = 0u64;
@@ -219,14 +222,14 @@ impl<'a> AllBitsRef<'a> {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct LeadingBitsRef<'a> {
-    all_bits: AllBitsRef<'a>,
+struct LeadingBits<T> {
+    all_bits: AllBits<T>,
     skip_trailing_bits: u8,
     skipped_trailing_bits_count_ones: u8,
 }
 
-impl<'a> From<AllBitsRef<'a>> for LeadingBitsRef<'a> {
-    fn from(all_bits: AllBitsRef<'a>) -> Self {
+impl<T> From<AllBits<T>> for LeadingBits<T> {
+    fn from(all_bits: AllBits<T>) -> Self {
         Self {
             all_bits,
             skip_trailing_bits: 0,
@@ -235,26 +238,26 @@ impl<'a> From<AllBitsRef<'a>> for LeadingBitsRef<'a> {
     }
 }
 
-impl LeadingBitsRef<'static> {
+impl LeadingBits<&'static [u8]> {
     pub const fn empty() -> Self {
         Self {
-            all_bits: AllBitsRef::empty(),
+            all_bits: AllBits::empty(),
             skip_trailing_bits: 0,
             skipped_trailing_bits_count_ones: 0,
         }
     }
 }
 
-fn get_partial_byte(all_bits: AllBitsRef, skip_trailing_bits: u8) -> u8 {
-    let last_byte = all_bits.0.last_byte().expect("Bits should not be empty");
-    let pow2 = (1u8 << skip_trailing_bits);
+fn get_partial_byte(all_bits: AllBits<&[u8]>, skip_trailing_bits: u8) -> u8 {
+    let &last_byte = all_bits.0.last().expect("Bits should not be empty");
+    let pow2 = 1u8 << skip_trailing_bits;
     debug_assert!(pow2.checked_sub(1).is_some());
     let mask = pow2.wrapping_sub(1);
     last_byte & mask
 }
 
-impl<'a> LeadingBitsRef<'a> {
-    pub fn from(all_bits: AllBitsRef<'a>, len: u64) -> Option<Self> {
+impl<'a> LeadingBits<&'a [u8]> {
+    pub fn from(all_bits: AllBits<&'a [u8]>, len: u64) -> Option<Self> {
         if len > all_bits.len() {
             return None;
         }
@@ -262,7 +265,7 @@ impl<'a> LeadingBitsRef<'a> {
         let use_bits = use_bytes * 8;
         let use_bytes = use_bytes as usize;
         debug_assert!(all_bits.0.get(..use_bytes).is_some());
-        let all_bits = AllBitsRef(unsafe { all_bits.0.get_unchecked(..use_bytes) });
+        let all_bits = AllBits(unsafe { all_bits.0.get_unchecked(..use_bytes) });
         debug_assert!(use_bits.checked_sub(len).map_or(false, |x| x < 8));
         let skip_trailing_bits = use_bits.wrapping_sub(len) as u8;
         let skipped_trailing_bits_count_ones = if skip_trailing_bits == 0 {
@@ -282,14 +285,8 @@ impl<'a> LeadingBitsRef<'a> {
         sub_should_not_overflow(self.all_bits.len(), self.skip_trailing_bits as u64)
     }
 
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        debug_assert!(self.skip_trailing_bits < 8);
-        self.all_bits.is_empty()
-    }
-
     pub fn get(self, idx_bits: u64) -> Option<bool> {
-        if ix_bits < self.len() {
+        if idx_bits < self.len() {
             debug_assert!(self.all_bits.get(idx_bits).is_some());
             Some(unsafe { self.all_bits.get_unchecked(idx_bits) })
         } else {
@@ -321,14 +318,16 @@ impl<'a> LeadingBitsRef<'a> {
 
 /// Bits stored as a sequence of bytes (most significant bit first).
 #[derive(Copy, Clone, Debug)]
-pub struct BitsRef<'a> {
-    leading_bits: LeadingBitsRef<'a>,
+pub struct Bits<T> {
+    leading_bits: LeadingBits<T>,
     skip_leading_bits: u8,
     skipped_leading_bits_count_ones: u8,
 }
 
-impl<'a> From<LeadingBitsRef<'a>> for BitsRef<'a> {
-    fn from(leading_bits: LeadingBitsRef<'_>) -> Self {
+pub type BitsRef<'a> = Bits<&'a [u8]>;
+
+impl<T> From<LeadingBits<T>> for Bits<T> {
+    fn from(leading_bits: LeadingBits<T>) -> Self {
         Self {
             leading_bits,
             skip_leading_bits: 0,
@@ -337,24 +336,29 @@ impl<'a> From<LeadingBitsRef<'a>> for BitsRef<'a> {
     }
 }
 
-impl BitsRef<'static> {
+impl<T> From<AllBits<T>> for Bits<T> {
+    fn from(all_bits: AllBits<T>) -> Self {
+        Self::from(<LeadingBits<T>>::from(all_bits))
+    }
+}
+
+impl Bits<&'static [u8]> {
     pub const fn empty() -> Self {
         Self {
-            leading_bits: LeadingBitsRef::empty(),
+            leading_bits: LeadingBits::empty(),
             skip_leading_bits: 0,
             skipped_leading_bits_count_ones: 0,
         }
     }
 }
 
-impl<'a> BitsRef<'a> {
-    pub fn from(all_bits: AllBitsRef<'a>, pos: u64, len: u64) -> Option<Self> {
-        let bytes = all_bits.0;
+impl<'a> Bits<&'a [u8]> {
+    pub fn from(bytes: &'a [u8], pos: u64, len: u64) -> Option<Self> {
         let (skip_bytes, skip_leading_bits) = split_idx(pos);
         let skip_leading_bits = skip_leading_bits as u8;
         let bytes = bytes.get(skip_bytes..)?;
         let extra_len = len + skip_leading_bits as u64;
-        let leading_bits = LeadingBitsRef::from(bytes.into(), extra_len)?;
+        let leading_bits = LeadingBits::from(bytes.into(), extra_len)?;
 
         let skipped_leading_bits_count_ones = if skip_leading_bits == 0 {
             0
@@ -435,8 +439,8 @@ impl<'a> BitsRef<'a> {
     }
 }
 
-impl<'a> AllBitsRef<'a> {
-    pub fn split_at_bytes(self, byte_idx: usize) -> Option<(AllBitsRef<'a>, AllBitsRef<'a>)> {
+impl<'a> AllBits<&'a [u8]> {
+    pub fn split_at_bytes(self, byte_idx: usize) -> Option<(AllBits<&'a [u8]>, AllBits<&'a [u8]>)> {
         if byte_idx > self.0.len() {
             return None;
         }
@@ -444,17 +448,20 @@ impl<'a> AllBitsRef<'a> {
         Some((Self::from(l), Self::from(r)))
     }
 
-    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBitsRef<'a>, BitsRef<'a>)> {
-        LeadingBitsRef::from(self, idx_bits).map(|leading_part| {
-            let trailing_part = BitsRef::from(self, idx_bits, self.len().wrapping_sub(idx_bits))
+    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBits<&'a [u8]>, Bits<&'a [u8]>)> {
+        LeadingBits::from(self, idx_bits).map(|leading_part| {
+            let trailing_part = Bits::from(self.0, idx_bits, self.len().wrapping_sub(idx_bits))
                 .expect("Indexes are already checked by other operation");
             (leading_part, trailing_part)
         })
     }
 }
 
-impl<'a> LeadingBitsRef<'a> {
-    pub fn split_at_bytes(self, byte_idx: usize) -> Option<(AllBitsRef<'a>, LeadingBitsRef<'a>)> {
+impl<'a> LeadingBits<&'a [u8]> {
+    pub fn split_at_bytes(
+        self,
+        byte_idx: usize,
+    ) -> Option<(AllBits<&'a [u8]>, LeadingBits<&'a [u8]>)> {
         let (leading_part, trailing_part) = self.all_bits.split_at_bytes(byte_idx)?;
         if trailing_part.is_empty() && self.skip_trailing_bits != 0 {
             return None;
@@ -467,7 +474,7 @@ impl<'a> LeadingBitsRef<'a> {
         Some((leading_part, trailing_part))
     }
 
-    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBitsRef<'a>, BitsRef<'a>)> {
+    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBits<&'a [u8]>, Bits<&'a [u8]>)> {
         if idx_bits > self.len() {
             return None;
         }
@@ -498,20 +505,12 @@ impl<'a> LeadingBitsRef<'a> {
                 (leading_part, trailing_part)
             })
     }
-
-    pub fn into_all_bits(self) -> Option<AllBitsRef<'a>> {
-        if self.skip_trailing_bits == 0 {
-            Some(self.all_bits)
-        } else {
-            None
-        }
-    }
 }
 
-impl<'a> BitsRef<'a> {
-    pub fn split_at(self, idx_bits: u64) -> Option<(BitsRef<'a>, BitsRef<'a>)> {
+impl<'a> Bits<&'a [u8]> {
+    pub fn split_at(self, idx_bits: u64) -> Option<(Bits<&'a [u8]>, Bits<&'a [u8]>)> {
         // If this overflows then it must be out of range
-        let actual_idx = idx_bits.checked_add(self.leading_bits as u64)?;
+        let actual_idx = idx_bits.checked_add(self.skip_leading_bits as u64)?;
         self.leading_bits
             .split_at(actual_idx)
             .map(|(leading_part, trailing_part)| {
@@ -524,11 +523,17 @@ impl<'a> BitsRef<'a> {
             })
     }
 
-    unsafe fn into_leading_bits_unchecked(self) -> LeadingBitsRef<'a> {
+    pub fn slice(self, range_bits: core::ops::Range<u64>) -> Option<Self> {
+        let new_len = range_bits.end.checked_sub(range_bits.start)?;
+        if range_bits.end > self.len() { return None };
+        Bits::from(self.leading_bits.all_bits.0, range_bits.start, new_len)
+    }
+
+    unsafe fn into_leading_bits_unchecked(self) -> LeadingBits<&'a [u8]> {
         self.leading_bits
     }
 
-    pub fn into_leading_bits(self) -> Option<(LeadingBitsRef<'a>)> {
+    fn into_leading_bits(self) -> Option<LeadingBits<&'a [u8]>> {
         if self.skip_leading_bits == 0 {
             Some(unsafe { self.into_leading_bits_unchecked() })
         } else {
@@ -537,7 +542,7 @@ impl<'a> BitsRef<'a> {
     }
 }
 
-impl<'a> PartialEq for LeadingBitsRef<'a> {
+impl<'a> PartialEq for LeadingBits<&'a [u8]> {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
@@ -546,8 +551,12 @@ impl<'a> PartialEq for LeadingBitsRef<'a> {
         if self.skip_trailing_bits == 0 {
             self.all_bits == other.all_bits
         } else {
-            let full_bytes_len = sub_should_not_overflow(self.all_bits.len(), 1);
-            let full_bytes_range = (..full_bytes_len);
+            let full_bytes_len = {
+                let bytes_len = self.all_bits.0.len();
+                debug_assert!(bytes_len.checked_sub(1).is_some());
+                bytes_len.wrapping_sub(1)
+            };
+            let full_bytes_range = ..full_bytes_len;
             let full_bytes_self = {
                 debug_assert!(self.all_bits.0.get(full_bytes_range.clone()).is_some());
                 unsafe { self.all_bits.0.get_unchecked(full_bytes_range.clone()) }
@@ -565,12 +574,12 @@ impl<'a> PartialEq for LeadingBitsRef<'a> {
     }
 }
 
-impl<'a> Eq for LeadingBitsRef<'a> {}
+impl<'a> Eq for LeadingBits<&'a [u8]> {}
 
-fn generalised_eq(left: BitsRef, right: BitsRef) -> bool {
+fn generalised_eq(left: Bits<&[u8]>, right: Bits<&[u8]>) -> bool {
     unsafe fn unchecked_eq_in_range(
-        left: AllBitsRef,
-        right: AllBitsRef,
+        left: AllBits<&[u8]>,
+        right: AllBits<&[u8]>,
         left_offset: u64,
         right_offset: u64,
         range: Range<u64>,
@@ -613,12 +622,12 @@ fn generalised_eq(left: BitsRef, right: BitsRef) -> bool {
             right.leading_bits.all_bits,
             left.skip_leading_bits as u64,
             right.skip_leading_bits as u64,
-            (0..left_len),
+            0..left_len,
         )
     }
 }
 
-impl<'a> PartialEq for BitsRef<'a> {
+impl<'a> PartialEq for Bits<&'a [u8]> {
     fn eq(&self, other: &Self) -> bool {
         if self.skip_leading_bits == other.skip_leading_bits {
             match self.into_leading_bits() {
@@ -639,16 +648,16 @@ impl<'a> PartialEq for BitsRef<'a> {
     }
 }
 
-impl<'a> Eq for BitsRef<'a> {}
+impl<'a> Eq for Bits<&'a [u8]> {}
 
 #[derive(Debug, Clone)]
 pub struct ChunksIter<'a> {
-    data: BitsRef<'a>,
+    data: Bits<&'a [u8]>,
     bits_in_chunk: u64,
 }
 
 impl<'a> ChunksIter<'a> {
-    fn new(data: BitsRef<'a>, bits_in_chunk: u64) -> Option<Self> {
+    fn new(data: Bits<&'a [u8]>, bits_in_chunk: u64) -> Option<Self> {
         if bits_in_chunk < 1 {
             None
         } else {
@@ -660,40 +669,46 @@ impl<'a> ChunksIter<'a> {
     }
 }
 
+impl<'a> Bits<&'a [u8]> {
+    pub fn chunks(self, bits_in_chunk: u64) -> Option<ChunksIter<'a>> {
+        ChunksIter::new(self, bits_in_chunk)
+    }
+}
+
 impl<'a> Iterator for ChunksIter<'a> {
-    type Item = BitsRef<'a>;
+    type Item = Bits<&'a [u8]>;
 
     fn next(&mut self) -> Option<Self::Item> {
         #[inline]
-        fn take_last_chunk(iter: &mut ChunksIter) -> Option<BitsRef> {
-            if iter.is_empty() {
+        fn take_last_chunk<'a>(iter: &mut ChunksIter<'a>) -> Option<Bits<&'a [u8]>> {
+            if iter.data.is_empty() {
                 None
             } else {
-                Some(core::mem::replace(&mut iter.data, BitsRef::empty()))
+                Some(core::mem::replace(&mut iter.data, Bits::empty()))
             }
         }
 
         #[inline]
         fn use_split<'a>(
             iter: &mut ChunksIter<'a>,
-            split: (BitsRef<'a>, BitsRef<'a>),
-        ) -> Option<BitsRef> {
+            split: (Bits<&'a [u8]>, Bits<&'a [u8]>),
+        ) -> Option<Bits<&'a [u8]>> {
             iter.data = split.1;
             Some(split.0)
         }
 
-        unsafe fn whole_bytes_case(iter: &mut ChunksIter) -> Option<BitsRef> {
+        unsafe fn whole_bytes_case<'a>(iter: &mut ChunksIter<'a>) -> Option<Bits<&'a [u8]>> {
             // Optimised case, we can use leading bytes and split bytewise
             debug_assert!(iter.data.into_leading_bits().is_some());
-            let data = unsafe { iter.data.into_leading_bits_unchecked() };
+            let data = iter.data.into_leading_bits_unchecked();
             debug_assert_eq!(iter.bits_in_chunk % 8, 0);
             match data.split_at_bytes((iter.bits_in_chunk / 8) as usize) {
                 None => take_last_chunk(iter),
-                Some(split) => use_split(iter, split.into()),
+                Some(split) => use_split(iter, (split.0.into(), split.1.into())),
             }
         }
 
-        fn general_case(iter: &mut ChunksIter) -> Option<BitsRef> {
+        fn general_case<'a>(iter: &mut ChunksIter<'a>) -> Option<Bits<&'a [u8]>> {
             match iter.data.split_at(iter.bits_in_chunk) {
                 None => take_last_chunk(iter),
                 Some(split) => use_split(iter, split),
@@ -726,71 +741,89 @@ impl<'a> core::iter::ExactSizeIterator for ChunksIter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::ops::Range;
     use std::vec::Vec;
 
-    struct PreparedBits {
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    pub struct SkipLeadingInfo {
+        bytes: u8,
+        bits: u8,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct PreparedBits {
         data: Vec<u8>,
-        skip_leading_bytes: u8,
-        skip_leading_bits: u8,
+        skip_leading: SkipLeadingInfo,
         skip_trailing_bits: u8,
     }
 
-    fn prepared_bits() -> impl Strategy<Value = PreparedBits> {
-        (0..8u8, 0..2u8).prop_flat_map(|(skip_leading_bytes, leading_trailing_bytes)| {
-            let min_data_len = skip_leading_bytes as usize + leading_trailing_bytes as usize;
-            let vec_gen = proptest::collection::vec(any::<u8>(), min_data_len..4096);
-            let first_byte_total = if leading_trailing_bytes > 1 { 8 } else { 0 };
-            let first_byte_share = (0..first_byte_total);
-            let last_byte_range = (0..([0, 7, 6][leading_trailing_bytes as usize]));
-            let bits_info_gen = (first_byte_share, (last_byte_range.clone(), last_byte_range));
-            (vec_gen, bits_info_gen).prop_map(
-                |(data, (first_byte_share, (last_byte_1, last_byte_2)))| {
-                    let mut last_byte = [last_byte_1, last_byte_2];
-                    last_byte.sort();
-                    let last_byte_1 = last_byte[0];
-                    let last_byte_2 = last_byte[1] - last_byte_1;
-                    let skip_leading_bits = first_byte_share + last_byte_1;
-                    let skip_trailing_bits = (first_byte_total - first_byte_share) + last_byte_2;
-                    debug_assert!(skip_leading_bits >= 0 && skip_leading_bits < 8);
-                    debug_assert!(skip_trailing_bits >= 0 && skip_trailing_bits < 8);
-                    debug_assert_eq!(
-                        ceil_div(skip_leading_bits + skip_trailing_bits, 8),
-                        leading_trailing_bytes
-                    );
-                    PreparedBits {
-                        data,
-                        skip_leading_bytes,
-                        skip_leading_bits,
-                        skip_trailing_bits,
-                    }
-                },
-            )
+    pub fn skip_leading_info() -> impl Strategy<Value = SkipLeadingInfo> {
+        (0..8u8, 0..8u8).prop_map(|(bytes, bits)| SkipLeadingInfo { bytes, bits })
+    }
+
+    pub fn prepared_bits_with_len_range(
+        len: Range<u64>,
+        skip_leading: SkipLeadingInfo,
+    ) -> impl Strategy<Value = PreparedBits> {
+        let skip_leading_bytes = skip_leading.bytes as usize;
+        let min_bytes =
+            ceil_div_u64(len.start + skip_leading.bits as u64, 8) as usize + skip_leading_bytes;
+        let max_bytes =
+            ceil_div_u64(len.end + skip_leading.bits as u64, 8) as usize + skip_leading_bytes;
+        let vec_gen = proptest::collection::vec(any::<u8>(), min_bytes..max_bytes);
+        (vec_gen, 0..8u8).prop_map(move |(data, skip_trailing_bits)| {
+            let skip_trailing_bits = skip_trailing_bits as u64;
+            let len_without_trailing =
+                ((data.len() - skip_leading.bytes as usize) * 8) as u64 - skip_leading.bits as u64;
+            let skip_trailing_bits = if skip_trailing_bits > len_without_trailing {
+                len_without_trailing
+            } else {
+                let len_with_trailing = len_without_trailing - skip_trailing_bits;
+                if len_with_trailing > len.end {
+                    len_without_trailing - len.end
+                } else {
+                    skip_trailing_bits
+                }
+            };
+            let chosen_len = len_without_trailing - skip_trailing_bits;
+            debug_assert!(skip_trailing_bits < 8);
+            debug_assert!(len.contains(&chosen_len));
+            PreparedBits {
+                data,
+                skip_leading,
+                skip_trailing_bits: skip_trailing_bits as u8,
+            }
         })
     }
 
+    pub fn prepared_bits() -> impl Strategy<Value = PreparedBits> {
+        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..4096, meta))
+    }
+
     impl PreparedBits {
-        pub fn all_bits(&self) -> AllBitsRef {
-            AllBitsRef::from(&self.data[self.skip_leading_bytes as usize..])
+        fn all_bits(&self) -> AllBits<&[u8]> {
+            AllBits::from(&self.data[self.skip_leading.bytes as usize..])
         }
 
-        pub fn leading_bits(&self) -> LeadingBitsRef {
+        #[allow(dead_code)]
+        fn leading_bits(&self) -> LeadingBits<&[u8]> {
             let all_bits = self.all_bits();
             let result =
-                LeadingBitsRef::from(all_bits, all_bits.len() - self.skip_trailing_bits as u64)
+                LeadingBits::from(all_bits, all_bits.len() - self.skip_trailing_bits as u64)
                     .expect("Should be in range");
             debug_assert_eq!(result.skip_trailing_bits, self.skip_trailing_bits);
             result
         }
 
-        pub fn bits(&self) -> BitsRef {
+        pub fn bits(&self) -> Bits<&[u8]> {
             let all_bits = self.all_bits();
-            let skip_leading_bits = self.skip_leading_bits as u64;
+            let skip_leading_bits = self.skip_leading.bits as u64;
             let skip_trailing_bits = self.skip_trailing_bits as u64;
-            let result = BitsRef::from(
-                all_bits,
+            let result = Bits::from(
+                all_bits.0,
                 skip_leading_bits,
                 all_bits.len() - skip_leading_bits - skip_trailing_bits,
             )
@@ -799,218 +832,52 @@ mod tests {
                 result.leading_bits.skip_trailing_bits,
                 self.skip_trailing_bits
             );
-            debug_assert_eq!(result.skip_leading_bits, self.skip_leading_bits);
+            debug_assert_eq!(result.skip_leading_bits, self.skip_leading.bits);
             result
         }
     }
 
-    use quickcheck::Arbitrary;
-    use std::boxed::Box;
-    use std::cmp::Ordering;
-
-    fn from_or_panic<T: ?Sized + std::ops::Deref<Target = [u8]>>(bytes: &T, len: u64) -> BitsRef {
-        BitsRef::from_bytes(bytes.deref(), 0u64, len)
-            .expect("Tried to make an invalid BitsRef in tests")
-    }
-
-    mod gen_bits {
-        use super::*;
-
-        #[derive(Clone, Debug)]
-        pub struct GenBits(Box<[u8]>, u64);
-
-        impl GenBits {
-            pub fn as_ref(&self) -> BitsRef {
-                from_or_panic(&self.0, self.1)
-            }
-        }
-
-        impl Arbitrary for GenBits {
-            fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
-                use rand::Rng;
-                let data = <Vec<u8>>::arbitrary(g);
-                let all_bits = data.len() as u64 * 8;
-                let overflow = g.gen_range(0, 64);
-                GenBits(data.into_boxed_slice(), all_bits.saturating_sub(overflow))
-            }
-        }
-    }
-    pub use self::gen_bits::GenBits;
-    use crate::ceil_div;
-
     #[test]
-    fn test_get() {
-        let pattern_a = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
-        let bits_a = from_or_panic(&pattern_a, 8 * 8);
-        for i in 0..bits_a.len() {
-            assert_eq!(
-                bits_a.get(i).unwrap(),
-                i / 8 == i % 8,
-                "Differed at position {}",
-                i
-            )
+    fn test_len_basic() {
+        fn check_len(bytes: &[u8], len: u64) {
+            assert_eq!(AllBits::from(bytes).len(), len);
         }
 
-        let pattern_b = vec![0xff, 0xc0];
-        let bits_b = from_or_panic(&pattern_b, 10);
-        for i in 0..10 {
-            assert_eq!(bits_b.get(i), Some(true), "Differed at position {}", i)
-        }
-        for i in 10..16 {
-            assert_eq!(bits_b.get(i), None, "Differed at position {}", i)
-        }
+        check_len(&[0], 8);
+        check_len(&[0, 0], 16);
+        check_len(&[0, 0, 0], 24);
+        check_len(&[], 0);
+        assert_eq!(AllBits::empty().len(), 0);
     }
 
     #[test]
-    fn test_count() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| from_or_panic(&bytes_a, len);
-        assert_eq!(12, make(16).count_ones());
-        assert_eq!(4, make(16).count_zeros());
-        assert_eq!(12, make(15).count_ones());
-        assert_eq!(3, make(15).count_zeros());
-        assert_eq!(11, make(14).count_ones());
-        assert_eq!(3, make(14).count_zeros());
-        assert_eq!(11, make(13).count_ones());
-        assert_eq!(2, make(13).count_zeros());
-        assert_eq!(10, make(12).count_ones());
-        assert_eq!(2, make(12).count_zeros());
-        assert_eq!(10, make(11).count_ones());
-        assert_eq!(1, make(11).count_zeros());
-        assert_eq!(9, make(10).count_ones());
-        assert_eq!(1, make(10).count_zeros());
-        assert_eq!(9, make(9).count_ones());
-        assert_eq!(0, make(9).count_zeros());
-        assert_eq!(8, make(8).count_ones());
-        assert_eq!(0, make(8).count_zeros());
-        assert_eq!(7, make(7).count_ones());
-        assert_eq!(0, make(7).count_zeros());
-        assert_eq!(0, make(0).count_ones());
-        assert_eq!(0, make(0).count_zeros());
-    }
-
-    #[test]
-    fn test_rank() {
-        let pattern_a = vec![0xff, 0xaau8];
-        let make = |len: u64| from_or_panic(&pattern_a, len);
-        let bits_a = make(16);
-        for i in 0..15 {
-            assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
-            assert_eq!(Some(make(i).count_zeros()), bits_a.rank_zeros(i));
-        }
-        assert_eq!(None, bits_a.rank_ones(16));
-        assert_eq!(None, bits_a.rank_zeros(16));
-        assert_eq!(None, make(13).rank_ones(13));
-        assert_eq!(None, make(13).rank_zeros(13));
-        assert_eq!(bits_a.rank_ones(12), make(13).rank_ones(12));
-        assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
-    }
-
-    #[test]
-    fn test_select() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| from_or_panic(&bytes_a, len);
-        assert_eq!(Some(14), make(16).select_ones(11));
-        assert_eq!(None, make(14).select_ones(11));
-    }
-
-    quickcheck! {
-        fn fuzz_test(bits: GenBits) -> () {
-            let bits = bits.as_ref();
-            let mut running_rank_ones = 0;
-            let mut running_rank_zeros = 0;
-            for idx in 0..bits.len() {
-                assert_eq!(Some(running_rank_ones), bits.rank_ones(idx));
-                assert_eq!(Some(running_rank_zeros), bits.rank_zeros(idx));
-                if bits.get(idx).unwrap() {
-                    assert_eq!(Some(idx), bits.select_ones(running_rank_ones));
-                    running_rank_ones += 1;
-                } else {
-                    assert_eq!(Some(idx), bits.select_zeros(running_rank_zeros));
-                    running_rank_zeros += 1;
-                }
-            }
-        }
-    }
-
-    impl<'a> BitsRef<'a> {
-        fn to_bool_vec_slow(self) -> Vec<bool> {
-            (0..self.len()).map(|idx| self.get(idx).unwrap()).collect()
-        }
-    }
-
-    quickcheck! {
-        fn test_cmp_eq_pair(l: GenBits, r: GenBits) -> () {
-            let l = l.as_ref();
-            let r = r.as_ref();
-            let l_vec = l.to_bool_vec_slow();
-            let r_vec = r.to_bool_vec_slow();
-            assert_eq!(l_vec.cmp(&r_vec), l.cmp(&r));
-            assert_eq!(l_vec.eq(&r_vec), l.eq(&r));
+    fn test_get_basic() {
+        fn check_get_rule(bytes: &[u8], for_idx: impl Fn(u64) -> bool) {
+            let bits = AllBits::from(bytes);
+            (0..bits.len()).for_each(|idx| {
+                assert_eq!(bits.get(idx), Some(for_idx(idx)))
+            });
+            (0..256).for_each(|offset| {
+                assert_eq!(bits.get(bits.len() + offset), None);
+            })
         }
 
-        fn test_cmp_eq_single(l: GenBits) -> () {
-            let l = l.as_ref();
-            let r = l;
-            let l_vec = l.to_bool_vec_slow();
-            let r_vec = r.to_bool_vec_slow();
-            assert_eq!(l_vec.cmp(&r_vec), l.cmp(&r));
-            assert_eq!(l_vec.eq(&r_vec), l.eq(&r));
-        }
+        check_get_rule(&[0x00, 0x00, 0xff], |idx| idx >= 16);
+        check_get_rule(&[0x00, 0x00, 0x7f], |idx| idx > 16);
+        // TODO: Some more example cases
     }
 
-    #[test]
-    fn test_eq_cmp() {
-        fn check<'a>(expected: Ordering, l: BitsRef<'a>, r: BitsRef<'a>) {
-            let expected_eq = match expected {
-                Ordering::Equal => true,
-                _ => false,
-            };
-            assert_eq!(expected_eq, l.eq(&r));
-            assert_eq!(expected, l.cmp(&r));
-        }
+    /* TODO: Add testing:
 
-        // Should ignore extra bits
-        check(
-            Ordering::Equal,
-            from_or_panic(&vec![0xff, 0xf0], 12),
-            from_or_panic(&vec![0xff, 0xff], 12),
-        );
+    Probably work via testing len/get, then testing split on this basis, then
+    using split & get to test various things.
 
-        check(
-            Ordering::Equal,
-            from_or_panic(&vec![], 0),
-            from_or_panic(&vec![], 0),
-        );
-        check(
-            Ordering::Less,
-            from_or_panic(&vec![0xff], 0),
-            from_or_panic(&vec![0xff], 1),
-        );
-        check(
-            Ordering::Greater,
-            from_or_panic(&vec![0xff], 1),
-            from_or_panic(&vec![0xff], 0),
-        );
-        check(
-            Ordering::Equal,
-            from_or_panic(&vec![0xff], 1),
-            from_or_panic(&vec![0xff], 1),
-        );
-        check(
-            Ordering::Less,
-            from_or_panic(&vec![0x00], 1),
-            from_or_panic(&vec![0xff], 1),
-        );
-        check(
-            Ordering::Greater,
-            from_or_panic(&vec![0xff], 1),
-            from_or_panic(&vec![0x00], 1),
-        );
-    }
+    - test_get
+    - test_count
+    - test_rank
+    - test_select
+    - test eq
+
+
+    */
 }
-
-#[cfg(test)]
-pub use self::tests::GenBits;

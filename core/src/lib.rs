@@ -34,20 +34,6 @@ extern crate quickcheck;
 extern crate proptest;
 
 #[cold]
-const fn ceil_div_slow(n: usize, d: usize) -> usize {
-    n / d + ((n % d > 0) as usize)
-}
-
-#[inline(always)]
-pub(crate) fn ceil_div(n: usize, d: usize) -> usize {
-    let nb = n.wrapping_add(d - 1);
-    if nb < n {
-        return ceil_div_slow(n, d);
-    };
-    nb / d
-}
-
-#[cold]
 const fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
     n / d + ((n % d > 0) as u64)
 }
@@ -65,13 +51,10 @@ mod ones_or_zeros;
 
 mod word;
 
-mod bytes;
+pub mod bits;
 
-pub mod bits_ref;
-
-mod with_offset;
-
-pub mod index_raw;
+// TODO: Bring back the actual indexing
+// pub mod index_raw;
 
 #[cfg(test)]
 mod tests {
@@ -81,24 +64,6 @@ mod tests {
     #[test]
     fn check_max_bits_in_bytes() {
         assert!(<u64>::max_value() / 8 <= <usize>::max_value() as u64);
-    }
-
-    #[test]
-    fn test_ceil_div_examples() {
-        assert_eq!(0, ceil_div(0, 4));
-        assert_eq!(1, ceil_div(1, 4));
-        assert_eq!(1, ceil_div(4, 4));
-        assert_eq!(2, ceil_div(5, 4));
-        assert_eq!(2, ceil_div(6, 4));
-        assert_eq!(2, ceil_div(7, 4));
-        assert_eq!(2, ceil_div(8, 4));
-
-        assert_eq!(ceil_div_slow(0, 43), ceil_div(0, 43));
-        assert_eq!(ceil_div_slow(1, 43), ceil_div(1, 43));
-        assert_eq!(
-            ceil_div_slow(usize::max_value(), 43),
-            ceil_div(usize::max_value(), 43)
-        );
     }
 
     #[test]
@@ -120,11 +85,6 @@ mod tests {
     }
 
     proptest! {
-        #[test]
-        fn test_ceil_div(x in any::<usize>(), d in 1..999999usize) {
-            prop_assert_eq!(ceil_div_slow(x, d), ceil_div(x, d));
-        }
-
         #[test]
         fn test_ceil_div_64(x in any::<u64>(), d in 1..999999u64) {
             prop_assert_eq!(ceil_div_u64_slow(x, d), ceil_div_u64(x, d));
