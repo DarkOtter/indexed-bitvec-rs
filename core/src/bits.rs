@@ -813,7 +813,8 @@ pub mod tests {
     }
 
     pub fn prepared_bits() -> impl Strategy<Value = PreparedBits> {
-        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..4097, meta))
+        // TODO: Up the default size
+        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..17, meta))
     }
 
     impl PreparedBits {
@@ -917,6 +918,7 @@ pub mod tests {
             let specific_bits = specific_bits.unwrap();
             assert_eq!(specific_bits.len(), len);
             (0..len).for_each(|idx| {
+                assert!(specific_bits.get(idx).is_some());
                 assert_eq!(specific_bits.get(idx), bits.get(idx + pos));
             });
             (0..256).for_each(|offset| {
@@ -1018,6 +1020,117 @@ pub mod tests {
                     }
                 }
             }
+        }
+
+        #[test]
+        fn test_count(prepared_bits in prepared_bits()) {
+            let all_bits = prepared_bits.all_bits();
+            let leading_bits = prepared_bits.leading_bits();
+            let bits = prepared_bits.bits();
+
+            assert!(all_bits.get(all_bits.len()).is_none());
+            assert!(leading_bits.get(all_bits.len()).is_none());
+            assert!(bits.get(all_bits.len()).is_none());
+
+            let mut all_counts = [0; 2];
+            let mut leading_counts = [0; 2];
+            let mut counts = [0; 2];
+
+            (0..all_bits.len()).for_each(|idx| {
+                all_bits.get(idx).map(|bit| all_counts[bit as usize] += 1);
+                leading_bits.get(idx).map(|bit| leading_counts[bit as usize] += 1);
+                bits.get(idx).map(|bit| counts[bit as usize] += 1);
+            });
+
+            assert_eq!(all_bits.count_ones(), all_counts[1]);
+            assert_eq!(leading_bits.count_ones(), leading_counts[1]);
+            assert_eq!([bits.count_zeros(), bits.count_ones()], counts);
+        }
+
+        #[test]
+        fn test_rank(prepared_bits in prepared_bits()) {
+            let all_bits = prepared_bits.all_bits();
+            let leading_bits = prepared_bits.leading_bits();
+            let bits = prepared_bits.bits();
+
+            assert!(all_bits.get(all_bits.len()).is_none());
+            assert!(leading_bits.get(all_bits.len()).is_none());
+            assert!(bits.get(all_bits.len()).is_none());
+
+            let mut all_counts = [0; 2];
+            let mut leading_counts = [0; 2];
+            let mut counts = [0; 2];
+
+            (0..all_bits.len()).for_each(|idx| {
+                let leading_rank_ones = leading_bits.rank_ones(idx);
+                assert_eq!(leading_rank_ones.is_some(), leading_bits.get(idx).is_some());
+                if leading_rank_ones.is_some() {
+                    assert_eq!(leading_rank_ones.unwrap(), leading_counts[1]);
+                }
+
+                let rank_ones = bits.rank_ones(idx);
+                let rank_zeros = bits.rank_zeros(idx);
+                assert_eq!(rank_ones.is_some(), bits.get(idx).is_some());
+                assert_eq!(rank_zeros.is_some(), bits.get(idx).is_some());
+                if rank_ones.is_some() {
+                    assert_eq!([rank_zeros.unwrap(), rank_ones.unwrap()], counts);
+                }
+
+                all_bits.get(idx).map(|bit| all_counts[bit as usize] += 1);
+                leading_bits.get(idx).map(|bit| leading_counts[bit as usize] += 1);
+                bits.get(idx).map(|bit| counts[bit as usize] += 1);
+            });
+        }
+
+        #[test]
+        fn test_select(prepared_bits in prepared_bits()) {
+            let all_bits = prepared_bits.all_bits();
+            let leading_bits = prepared_bits.leading_bits();
+            let bits = prepared_bits.bits();
+
+            assert!(all_bits.get(all_bits.len()).is_none());
+            assert!(leading_bits.get(all_bits.len()).is_none());
+            assert!(bits.get(all_bits.len()).is_none());
+
+            let mut all_counts = [0; 2];
+            let mut leading_counts = [0; 2];
+            let mut counts = [0; 2];
+
+            (0..all_bits.len()).for_each(|idx| {
+                let bit = all_bits.get(idx).expect("Should be in range");
+                if bit {
+                    assert_eq!(all_bits.select::<OneBits>(all_counts[1]), Some(idx));
+                } else {
+                    assert_eq!(all_bits.select::<ZeroBits>(all_counts[0]), Some(idx));
+                }
+
+                if let Some(bit) = leading_bits.get(idx) {
+                    if bit {
+                        assert_eq!(leading_bits.select::<OneBits>(leading_counts[1]), Some(idx));
+                    } else {
+                        assert_eq!(leading_bits.select::<ZeroBits>(leading_counts[0]), Some(idx));
+                    }
+                }
+
+                if let Some(bit) = bits.get(idx) {
+                    if bit {
+                        assert_eq!(bits.select_ones(counts[1]), Some(idx));
+                    } else {
+                        assert_eq!(bits.select_zeros(counts[0]), Some(idx));
+                    }
+                }
+
+                all_bits.get(idx).map(|bit| all_counts[bit as usize] += 1);
+                leading_bits.get(idx).map(|bit| leading_counts[bit as usize] += 1);
+                bits.get(idx).map(|bit| counts[bit as usize] += 1);
+            });
+
+            assert!(all_bits.select::<OneBits>(all_counts[1]).is_none());
+            assert!(all_bits.select::<ZeroBits>(all_counts[0]).is_none());
+            assert!(leading_bits.select::<OneBits>(leading_counts[1]).is_none());
+            assert!(leading_bits.select::<ZeroBits>(leading_counts[0]).is_none());
+            assert!(bits.select_ones(counts[1]).is_none());
+            assert!(bits.select_zeros(counts[0]).is_none());
         }
     }
 
