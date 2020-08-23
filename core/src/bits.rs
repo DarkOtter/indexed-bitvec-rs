@@ -219,6 +219,22 @@ impl<'a> AllBits<&'a [u8]> {
             .ok()
             .map(|sub_res| running_index + sub_res)
     }
+
+    pub fn split_at_bytes(self, byte_idx: usize) -> Option<(AllBits<&'a [u8]>, AllBits<&'a [u8]>)> {
+        if byte_idx > self.0.len() {
+            return None;
+        }
+        let (l, r) = self.0.split_at(byte_idx);
+        Some((Self::from(l), Self::from(r)))
+    }
+
+    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBits<&'a [u8]>, Bits<&'a [u8]>)> {
+        LeadingBits::from(self, idx_bits).map(|leading_part| {
+            let trailing_part = Bits::from(self.0, idx_bits, self.len().wrapping_sub(idx_bits))
+                .expect("Indexes are already checked by other operation");
+            (leading_part, trailing_part)
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -319,6 +335,54 @@ impl<'a> LeadingBits<&'a [u8]> {
         self.all_bits
             .select::<W>(target_rank)
             .filter(|&idx| idx < self.len())
+    }
+
+    pub fn split_at_bytes(
+        self,
+        byte_idx: usize,
+    ) -> Option<(AllBits<&'a [u8]>, LeadingBits<&'a [u8]>)> {
+        let (leading_part, trailing_part) = self.all_bits.split_at_bytes(byte_idx)?;
+        if trailing_part.is_empty() && self.skip_trailing_bits != 0 {
+            return None;
+        }
+        let trailing_part = Self {
+            all_bits: trailing_part,
+            skip_trailing_bits: self.skip_trailing_bits,
+            skipped_trailing_bits_count_ones: self.skipped_trailing_bits_count_ones,
+        };
+        Some((leading_part, trailing_part))
+    }
+
+    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBits<&'a [u8]>, Bits<&'a [u8]>)> {
+        if idx_bits > self.len() {
+            return None;
+        }
+        self.all_bits
+            .split_at(idx_bits)
+            .map(|(leading_part, mut trailing_part)| {
+                debug_assert_eq!(trailing_part.leading_bits.skip_trailing_bits, 0);
+                debug_assert_eq!(
+                    trailing_part.leading_bits.skipped_trailing_bits_count_ones,
+                    0
+                );
+                trailing_part.leading_bits.skip_trailing_bits = self.skip_trailing_bits;
+                trailing_part.leading_bits.skipped_trailing_bits_count_ones =
+                    self.skipped_trailing_bits_count_ones;
+                debug_assert!(
+                    !(trailing_part.leading_bits.all_bits.is_empty()
+                        && trailing_part.leading_bits.skip_trailing_bits != 0)
+                );
+                debug_assert!(
+                    trailing_part.skip_leading_bits + trailing_part.leading_bits.skip_trailing_bits
+                        <= 8
+                );
+                debug_assert!(
+                    trailing_part.skip_leading_bits + trailing_part.leading_bits.skip_trailing_bits
+                        == 0
+                        || !trailing_part.leading_bits.all_bits.0.is_empty()
+                );
+                (leading_part, trailing_part)
+            })
     }
 }
 
@@ -443,77 +507,7 @@ impl<'a> Bits<&'a [u8]> {
     pub fn select_zeros(self, target_rank: u64) -> Option<u64> {
         self.select::<ZeroBits>(target_rank)
     }
-}
 
-impl<'a> AllBits<&'a [u8]> {
-    pub fn split_at_bytes(self, byte_idx: usize) -> Option<(AllBits<&'a [u8]>, AllBits<&'a [u8]>)> {
-        if byte_idx > self.0.len() {
-            return None;
-        }
-        let (l, r) = self.0.split_at(byte_idx);
-        Some((Self::from(l), Self::from(r)))
-    }
-
-    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBits<&'a [u8]>, Bits<&'a [u8]>)> {
-        LeadingBits::from(self, idx_bits).map(|leading_part| {
-            let trailing_part = Bits::from(self.0, idx_bits, self.len().wrapping_sub(idx_bits))
-                .expect("Indexes are already checked by other operation");
-            (leading_part, trailing_part)
-        })
-    }
-}
-
-impl<'a> LeadingBits<&'a [u8]> {
-    pub fn split_at_bytes(
-        self,
-        byte_idx: usize,
-    ) -> Option<(AllBits<&'a [u8]>, LeadingBits<&'a [u8]>)> {
-        let (leading_part, trailing_part) = self.all_bits.split_at_bytes(byte_idx)?;
-        if trailing_part.is_empty() && self.skip_trailing_bits != 0 {
-            return None;
-        }
-        let trailing_part = Self {
-            all_bits: trailing_part,
-            skip_trailing_bits: self.skip_trailing_bits,
-            skipped_trailing_bits_count_ones: self.skipped_trailing_bits_count_ones,
-        };
-        Some((leading_part, trailing_part))
-    }
-
-    pub fn split_at(self, idx_bits: u64) -> Option<(LeadingBits<&'a [u8]>, Bits<&'a [u8]>)> {
-        if idx_bits > self.len() {
-            return None;
-        }
-        self.all_bits
-            .split_at(idx_bits)
-            .map(|(leading_part, mut trailing_part)| {
-                debug_assert_eq!(trailing_part.leading_bits.skip_trailing_bits, 0);
-                debug_assert_eq!(
-                    trailing_part.leading_bits.skipped_trailing_bits_count_ones,
-                    0
-                );
-                trailing_part.leading_bits.skip_trailing_bits = self.skip_trailing_bits;
-                trailing_part.leading_bits.skipped_trailing_bits_count_ones =
-                    self.skipped_trailing_bits_count_ones;
-                debug_assert!(
-                    !(trailing_part.leading_bits.all_bits.is_empty()
-                        && trailing_part.leading_bits.skip_trailing_bits != 0)
-                );
-                debug_assert!(
-                    trailing_part.skip_leading_bits + trailing_part.leading_bits.skip_trailing_bits
-                        <= 8
-                );
-                debug_assert!(
-                    trailing_part.skip_leading_bits + trailing_part.leading_bits.skip_trailing_bits
-                        == 0
-                        || !trailing_part.leading_bits.all_bits.0.is_empty()
-                );
-                (leading_part, trailing_part)
-            })
-    }
-}
-
-impl<'a> Bits<&'a [u8]> {
     pub fn split_at(self, idx_bits: u64) -> Option<(Bits<&'a [u8]>, Bits<&'a [u8]>)> {
         // If this overflows then it must be out of range
         let actual_idx = idx_bits.checked_add(self.skip_leading_bits as u64)?;
@@ -547,6 +541,10 @@ impl<'a> Bits<&'a [u8]> {
         } else {
             None
         }
+    }
+
+    pub fn chunks(self, bits_in_chunk: u64) -> Option<ChunksIter<'a>> {
+        ChunksIter::new(self, bits_in_chunk)
     }
 }
 
@@ -674,12 +672,6 @@ impl<'a> ChunksIter<'a> {
                 bits_in_chunk,
             })
         }
-    }
-}
-
-impl<'a> Bits<&'a [u8]> {
-    pub fn chunks(self, bits_in_chunk: u64) -> Option<ChunksIter<'a>> {
-        ChunksIter::new(self, bits_in_chunk)
     }
 }
 
@@ -982,7 +974,10 @@ pub mod tests {
         let singleton_byte = AllBits::from(&singleton_ary[..]);
         assert!(!singleton_byte.is_empty());
         for i in 0..8 {
-            assert_eq!(LeadingBits::from(singleton_byte, i).unwrap().is_empty(), i == 0);
+            assert_eq!(
+                LeadingBits::from(singleton_byte, i).unwrap().is_empty(),
+                i == 0
+            );
             assert!(Bits::from(singleton_byte.0, i, 0).unwrap().is_empty());
         }
     }
