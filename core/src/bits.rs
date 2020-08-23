@@ -285,6 +285,12 @@ impl<'a> LeadingBits<&'a [u8]> {
         sub_should_not_overflow(self.all_bits.len(), self.skip_trailing_bits as u64)
     }
 
+    #[cfg(test)]
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.all_bits.is_empty()
+    }
+
     pub fn get(self, idx_bits: u64) -> Option<bool> {
         if idx_bits < self.len() {
             debug_assert!(self.all_bits.get(idx_bits).is_some());
@@ -525,7 +531,9 @@ impl<'a> Bits<&'a [u8]> {
 
     pub fn slice(self, range_bits: core::ops::Range<u64>) -> Option<Self> {
         let new_len = range_bits.end.checked_sub(range_bits.start)?;
-        if range_bits.end > self.len() { return None };
+        if range_bits.end > self.len() {
+            return None;
+        };
         Bits::from(self.leading_bits.all_bits.0, range_bits.start, new_len)
     }
 
@@ -743,6 +751,7 @@ impl<'a> core::iter::ExactSizeIterator for ChunksIter<'a> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use proptest::collection::SizeRange;
     use proptest::prelude::*;
     use std::ops::Range;
     use std::vec::Vec;
@@ -753,6 +762,10 @@ pub mod tests {
         bits: u8,
     }
 
+    pub fn skip_leading_info() -> impl Strategy<Value = SkipLeadingInfo> {
+        (0..8u8, 0..8u8).prop_map(|(bytes, bits)| SkipLeadingInfo { bytes, bits })
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct PreparedBits {
         data: Vec<u8>,
@@ -760,8 +773,8 @@ pub mod tests {
         skip_trailing_bits: u8,
     }
 
-    pub fn skip_leading_info() -> impl Strategy<Value = SkipLeadingInfo> {
-        (0..8u8, 0..8u8).prop_map(|(bytes, bits)| SkipLeadingInfo { bytes, bits })
+    fn bytes(len_range: impl Into<SizeRange>) -> impl Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(any::<u8>(), len_range)
     }
 
     pub fn prepared_bits_with_len_range(
@@ -773,7 +786,7 @@ pub mod tests {
             ceil_div_u64(len.start + skip_leading.bits as u64, 8) as usize + skip_leading_bytes;
         let max_bytes =
             ceil_div_u64(len.end + skip_leading.bits as u64, 8) as usize + skip_leading_bytes;
-        let vec_gen = proptest::collection::vec(any::<u8>(), min_bytes..max_bytes);
+        let vec_gen = bytes(min_bytes..max_bytes);
         (vec_gen, 0..8u8).prop_map(move |(data, skip_trailing_bits)| {
             let skip_trailing_bits = skip_trailing_bits as u64;
             let len_without_trailing =
@@ -800,7 +813,7 @@ pub mod tests {
     }
 
     pub fn prepared_bits() -> impl Strategy<Value = PreparedBits> {
-        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..4096, meta))
+        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..4097, meta))
     }
 
     impl PreparedBits {
@@ -808,7 +821,6 @@ pub mod tests {
             AllBits::from(&self.data[self.skip_leading.bytes as usize..])
         }
 
-        #[allow(dead_code)]
         fn leading_bits(&self) -> LeadingBits<&[u8]> {
             let all_bits = self.all_bits();
             let result =
@@ -838,6 +850,15 @@ pub mod tests {
     }
 
     #[test]
+    fn test_empty() {
+        let empty = Bits::empty();
+        assert_eq!(empty.len(), 0);
+        (0..256).for_each(|idx| {
+            assert_eq!(empty.get(idx), None);
+        })
+    }
+
+    #[test]
     fn test_len_basic() {
         fn check_len(bytes: &[u8], len: u64) {
             assert_eq!(AllBits::from(bytes).len(), len);
@@ -854,17 +875,150 @@ pub mod tests {
     fn test_get_basic() {
         fn check_get_rule(bytes: &[u8], for_idx: impl Fn(u64) -> bool) {
             let bits = AllBits::from(bytes);
-            (0..bits.len()).for_each(|idx| {
-                assert_eq!(bits.get(idx), Some(for_idx(idx)))
-            });
+            (0..bits.len()).for_each(|idx| assert_eq!(bits.get(idx), Some(for_idx(idx))));
             (0..256).for_each(|offset| {
                 assert_eq!(bits.get(bits.len() + offset), None);
             })
         }
 
         check_get_rule(&[0x00, 0x00, 0xff], |idx| idx >= 16);
-        check_get_rule(&[0x00, 0x00, 0x7f], |idx| idx > 16);
-        // TODO: Some more example cases
+        check_get_rule(&[0x00, 0x00, 0x7f], |idx| idx >= 17);
+        check_get_rule(&[0x00, 0x00, 0x3f], |idx| idx >= 18);
+        check_get_rule(&[0x00, 0x00, 0x0f], |idx| idx >= 20);
+        (0..256).for_each(|idx| {
+            assert_eq!(AllBits::empty().get(idx), None);
+        });
+    }
+
+    fn bytes_and_poslen(len_range: Range<usize>) -> impl Strategy<Value = (Vec<u8>, u64, u64)> {
+        len_range.prop_flat_map(|actual_len| {
+            let vec_gen = bytes(actual_len);
+            let len_bits = actual_len as u64 * 8;
+            let pos_gen = 0..=len_bits;
+            (vec_gen, pos_gen.clone(), pos_gen).prop_map(|(data, poslen1, poslen2)| {
+                let mut poslen = [poslen1, poslen2];
+                poslen.sort_unstable();
+                (
+                    data,
+                    poslen[0],
+                    poslen[1].checked_sub(poslen[0]).expect("Should be larger"),
+                )
+            })
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn test_from_succeeding(bytes_and_poslen in bytes_and_poslen(0..4097)) {
+            let (bytes, pos, len) = bytes_and_poslen;
+            let bits = AllBits::from(bytes.as_slice());
+            let specific_bits = Bits::from(bytes.as_slice(), pos, len);
+            assert!(specific_bits.is_some());
+            let specific_bits = specific_bits.unwrap();
+            assert_eq!(specific_bits.len(), len);
+            (0..len).for_each(|idx| {
+                assert_eq!(specific_bits.get(idx), bits.get(idx + pos));
+            });
+            (0..256).for_each(|offset| {
+                assert_eq!(specific_bits.get(len + offset), None);
+            })
+        }
+
+        #[test]
+        fn test_from_failing(bytes_and_poslen in
+        (0usize..4097).prop_flat_map(|actual_len| {
+            let len_bits = actual_len as u64 * 8;
+            (bytes(actual_len), 0..=len_bits, 1u64..256).prop_map(move |(bytes, pos, len_overflow)| {
+                (bytes, pos, (len_bits + len_overflow) - pos)
+            })
+        })
+        ) {
+            let (bytes, pos, len) = bytes_and_poslen;
+            assert!(Bits::from(bytes.as_slice(), pos, len).is_none());
+        }
+
+        #[test]
+        fn test_len(prepared_bits in prepared_bits()) {
+            let all_bits = prepared_bits.all_bits();
+            let leading_bits = prepared_bits.leading_bits();
+            let bits = prepared_bits.bits();
+
+            assert_eq!(all_bits.len().checked_sub(leading_bits.len()), Some(leading_bits.skip_trailing_bits as u64));
+            assert_eq!(leading_bits.len().checked_sub(bits.len()), Some(bits.skip_leading_bits as u64));
+        }
+
+        #[test]
+        fn test_is_empty_probably_not_empty(prepared_bits in prepared_bits()) {
+            let all_bits = prepared_bits.all_bits();
+            let leading_bits = prepared_bits.leading_bits();
+            let bits = prepared_bits.bits();
+            assert_eq!(all_bits.is_empty(), all_bits.len() == 0);
+            assert_eq!(leading_bits.is_empty(), leading_bits.len() == 0);
+            assert_eq!(bits.is_empty(), bits.len() == 0);
+            if all_bits.is_empty() {
+                assert!(leading_bits.is_empty());
+            }
+            if leading_bits.is_empty() {
+                assert!(bits.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_empty_probably_empty() {
+        assert!(AllBits::empty().is_empty());
+        assert!(LeadingBits::empty().is_empty());
+        assert!(Bits::empty().is_empty());
+
+        let empty_ary = [0u8; 0];
+        let empty_bits = AllBits::from(&empty_ary[..]);
+        assert!(empty_bits.is_empty());
+        assert!(LeadingBits::from(empty_bits, 0).unwrap().is_empty());
+        assert!(Bits::from(empty_bits.0, 0, 0).unwrap().is_empty());
+
+        let singleton_ary = [0u8; 1];
+        let singleton_byte = AllBits::from(&singleton_ary[..]);
+        assert!(!singleton_byte.is_empty());
+        for i in 0..8 {
+            assert_eq!(LeadingBits::from(singleton_byte, i).unwrap().is_empty(), i == 0);
+            assert!(Bits::from(singleton_byte.0, i, 0).unwrap().is_empty());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_get(prepared_bits in prepared_bits()) {
+            let all_bits = prepared_bits.all_bits();
+            let leading_bits = prepared_bits.leading_bits();
+            let bits = prepared_bits.bits();
+
+            for idx in 0..(all_bits.len() + 256) {
+                if idx >= all_bits.len() {
+                    assert!(all_bits.get(idx).is_none());
+                    assert!(leading_bits.get(idx).is_none());
+                    assert!(bits.get(idx).is_none());
+                } else {
+                    assert!(all_bits.get(idx).is_some());
+
+                    if idx >= leading_bits.len() {
+                        assert_ne!(leading_bits.skip_trailing_bits, 0);
+                        assert!(leading_bits.get(idx).is_none());
+                        assert!(bits.get(idx).is_none());
+                    } else {
+                        assert!(leading_bits.get(idx).is_some());
+                        assert_eq!(leading_bits.get(idx), all_bits.get(idx));
+
+                        if idx >= bits.len() {
+                            assert_ne!(bits.skip_leading_bits, 0);
+                            assert!(bits.get(idx).is_none());
+                        } else {
+                            assert!(bits.get(idx).is_some());
+                            assert_eq!(bits.get(idx), leading_bits.get(idx + bits.skip_leading_bits as u64));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /* TODO: Add testing:
