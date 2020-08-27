@@ -509,14 +509,6 @@ impl<'a> Bits<&'a [u8]> {
             })
     }
 
-    pub fn slice(self, range_bits: core::ops::Range<u64>) -> Option<Self> {
-        let new_len = range_bits.end.checked_sub(range_bits.start)?;
-        if range_bits.end > self.len() {
-            return None;
-        };
-        Bits::from(self.leading_bits.all_bits.0, range_bits.start, new_len)
-    }
-
     unsafe fn into_leading_bits_unchecked(self) -> LeadingBits<&'a [u8]> {
         self.leading_bits
     }

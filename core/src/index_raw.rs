@@ -20,9 +20,10 @@
 //! so you may run into panics from e.g. out of bounds accesses
 //! to slices. They should all be memory-safe though.
 
-use crate::bits_ref::BitsRef;
+use crate::bits::BitsRef;
 use crate::ceil_div_u64;
 use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
+use core::ops::Range;
 
 mod size {
     use super::*;
@@ -40,6 +41,7 @@ mod size {
     }
 
     pub const L1_BLOCKS_PER_L0_BLOCK: usize = (BITS_PER_L0_BLOCK / BITS_PER_L1_BLOCK) as usize;
+    pub const L2_BLOCKS_PER_L1_BLOCK: u64 = BITS_PER_L1_BLOCK / BITS_PER_L2_BLOCK;
 
     #[cfg(test)]
     mod tests {
@@ -51,19 +53,10 @@ mod size {
             assert_eq!(BITS_PER_L1_BLOCK % 8, 0);
             assert_eq!(BITS_PER_L2_BLOCK % 8, 0);
         }
-
-        #[test]
-        fn l1l2_evenly_divide_l0() {
-            // This property is needed so that the size of the l1l2
-            // index works out correctly if calculated across separate
-            // l0 blocks.
-            assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L1_BLOCK, 0);
-            assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L2_BLOCK, 0);
-        }
-
         #[test]
         fn block_sizes_evenly_divide() {
             assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L1_BLOCK, 0);
+            assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L2_BLOCK, 0);
             assert_eq!(BITS_PER_L1_BLOCK % BITS_PER_L2_BLOCK, 0);
         }
     }
@@ -181,6 +174,7 @@ R: core::iter::ExactSizeIterator,
     left.zip(right)
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct IndexSizeError;
 
 fn build_index<'a, 'b>(
@@ -252,61 +246,55 @@ fn build_index<'a, 'b>(
     Ok((l0_index, l1l2_index))
 }
 
-fn ternary_search_with_index<T>(
-    data: &[T],
-    in_which_part: impl Fn(usize, &T) -> core::cmp::Ordering,
-) -> (usize, usize) {
-    const LINEAR_SEARCH_SIZE: usize = 16;
-    let mut low_idx = 0;
-    let mut high_idx = data.len();
+fn midpoint(a: u64, b: u64) -> u64 {
+    #[cfg(debug_assertions)]
+    fn check_midpoint(a: u64, b: u64, mid: u64) -> bool {
+        let min = core::cmp::min(a, b);
+        let max = core::cmp::max(a, b);
+        mid >= min && mid <= max
+        && max - (mid - min + mid) <= 1
+    }
 
-    loop {
-        debug_assert!(high_idx.checked_sub(low_idx).is_some());
-        let span = high_idx.wrapping_sub(low_idx);
-        if span <= LINEAR_SEARCH_SIZE {
+    let a_hi = a >> 1;
+    let b_hi = b >> 1;
+    let a_lo = a & 1;
+    let b_lo = b & 1;
+    let lo = a_lo & b_lo;
+    debug_assert!(a_hi.checked_add(b_hi).is_some());
+    let hi = a_hi.wrapping_add(b_hi);
+    debug_assert!(hi.checked_add(lo).is_some());
+    let mid = hi.wrapping_add(lo);
+    debug_assert!(check_midpoint(a, b, mid));
+    mid
+}
+
+fn binary_search(
+    mut in_range: Range<u64>,
+    is_greater_or_equal_tgt: impl Fn(u64) -> bool,
+) -> u64 {
+    assert!(in_range.start <= in_range.end, "Range start bound must not be after end bound");
+
+    const MIN_SEARCH_SIZE: u64 = 16;
+    while in_range.end.wrapping_sub(in_range.start) > MIN_SEARCH_SIZE {
+        let mid = midpoint(in_range.start, in_range.end);
+        if is_greater_or_equal_tgt(mid) {
+            in_range.end = mid;
+        } else {
+            in_range.start = mid + 1;
+        }
+    }
+
+    for idx in in_range.clone() {
+        if is_greater_or_equal_tgt(idx) {
+            in_range.end = idx;
             break;
-        }
-
-        let offset = (span / 2).wrapping_add((span & low_idx) & 0x1);
-        debug_assert!(low_idx.checked_add(offset).is_some());
-        let mid = low_idx.wrapping_add(offset);
-
-        debug_assert!(data.get(mid).is_some());
-        let item = unsafe { data.get_unchecked(mid) };
-        use core::cmp::Ordering;
-        match in_which_part(mid, item) {
-            Ordering::Less => low_idx = mid + 1,
-            Ordering::Greater => high_idx = mid,
-            Ordering::Equal => {
-                let lower_part = &data[low_idx..mid];
-                let upper_part = &data[mid + 1..high_idx];
-                let (lower_idx, _) = ternary_search_with_index(lower_part, |idx, item| {
-                    in_which_part(idx, item).then(Ordering::Greater)
-                });
-                let (_, upper_idx) = ternary_search_with_index(upper_part, |idx, item| {
-                    in_which_part(idx, item).then(Ordering::Less)
-                });
-                return (low_idx + lower_idx, mid + 1 + upper_idx);
-            }
+        } else {
+            in_range.start = idx + 1;
         }
     }
 
-    let span_start_idx = low_idx;
-    let span = &data[span_start_idx..high_idx];
-    for (sub_idx, item) in span.iter().enumerate() {
-        let idx = span_start_idx + sub_idx;
-        use core::cmp::Ordering;
-        match in_which_part(idx, item) {
-            Ordering::Less => low_idx = idx + 1,
-            Ordering::Greater => {
-                high_idx = idx;
-                break;
-            }
-            Ordering::Equal => (),
-        }
-    }
-
-    (low_idx, high_idx)
+    debug_assert!(in_range.start >= in_range.end && in_range.start - in_range.end <= 1);
+    in_range.start
 }
 
 impl<'a> IndexedBits<'a> {
@@ -343,41 +331,52 @@ impl<'a> IndexedBits<'a> {
         ZeroBits::convert_count(self.count_ones(), self.len())
     }
 
+    fn read_rank_ones_from_idx(&self, l2_blocks_from_start: u64) -> Option<u64> {
+        let l1_blocks_from_start = (l2_blocks_from_start / size::L2_BLOCKS_PER_L1_BLOCK) as usize;
+        let &l1l2_entry = self.l1l2_index.get(l1_blocks_from_start)?;
+
+        let l2_idx = (l2_blocks_from_start % size::L2_BLOCKS_PER_L1_BLOCK) as usize;
+        let l0_idx = l1_blocks_from_start / size::L1_BLOCKS_PER_L0_BLOCK;
+
+        let l0_rank = if l0_idx == 0 {
+            0
+        } else {
+            let get_idx = l0_idx.wrapping_sub(1);
+            debug_assert!(self.l0_index.get(get_idx).is_some());
+            unsafe { self.l0_index.get_unchecked(get_idx) }.0
+        };
+
+        let l1l2_rank = {
+            let l2_index = l1l2_entry.unpack();
+            debug_assert!(l2_index.0.get(l2_idx).is_some());
+            *unsafe { l2_index.0.get_unchecked(l2_idx) }
+        };
+
+        Some(l0_rank + l1l2_rank as u64)
+    }
+
     pub fn rank_ones(&self, idx: u64) -> Option<u64> {
         if idx >= self.len() {
             None
         } else {
-            let l0_idx = (idx / size::BITS_PER_L0_BLOCK) as usize;
-            let within_l0_idx = idx % size::BITS_PER_L0_BLOCK;
-            let l1_idx = (within_l0_idx / size::BITS_PER_L1_BLOCK) as usize;
-            let within_l1_idx = within_l0_idx % size::BITS_PER_L1_BLOCK;
-            let l2_idx = (within_l1_idx / size::BITS_PER_L2_BLOCK) as usize;
-            let within_l2_idx = within_l1_idx % size::BITS_PER_L2_BLOCK;
-            debug_assert!(within_l2_idx <= idx);
-            let l2_block_start_idx = idx.wrapping_sub(within_l2_idx);
-            debug_assert!(l2_block_start_idx <= self.data.len());
-            debug_assert!(idx <= self.data.len());
-            debug_assert!(l2_block_start_idx <= idx);
-            let l0_rank = if l0_idx == 0 {
-                0
-            } else {
-                let get_idx = l0_idx.wrapping_sub(1);
-                debug_assert!(self.l0_index.get(get_idx).is_some());
-                unsafe { self.l0_index.get_unchecked(get_idx) }.0
+            let l2_blocks_from_start = idx / size::BITS_PER_L2_BLOCK;
+
+            let rank_from_data = {
+                let l2_block_start_idx = l2_blocks_from_start * size::BITS_PER_L2_BLOCK;
+                let from_l2_block_idx = idx.checked_sub(l2_block_start_idx)
+                    .expect("It's impossible for the l2 block to start after the target position");
+                let (_data_upto_index_pos, data_from_index_pos) =
+                    self.data.split_at(l2_block_start_idx)
+                        .expect("If the index is not in range it's a bug");
+                data_from_index_pos.rank_ones(from_l2_block_idx)
+                    .expect("If the index is not in range it's a bug")
             };
-            let l1l2_rank = {
-                let l1_idx = l1_idx.wrapping_add(l0_idx * size::L1_BLOCKS_PER_L0_BLOCK);
-                debug_assert!(self.l1l2_index.get(l1_idx).is_some());
-                let l1l2_entry = *unsafe { self.l1l2_index.get_unchecked(l1_idx) };
-                let l2_index = l1l2_entry.unpack();
-                debug_assert!(l2_index.0.get(l2_idx).is_some());
-                *unsafe { l2_index.0.get_unchecked(l2_idx as usize) }
-            };
-            let within_l2_data =
-                self.data.slice(l2_block_start_idx..idx)
-                    .expect("If the indexes are not in range it's a bug")
-                ;
-            Some(l0_rank + l1l2_rank as u64 + within_l2_data.count_ones())
+
+            let rank_from_index =
+                self.read_rank_ones_from_idx(l2_blocks_from_start)
+                    .expect("If the index is not in range it's a bug");
+
+            Some(rank_from_index + rank_from_data)
         }
     }
 
@@ -386,90 +385,57 @@ impl<'a> IndexedBits<'a> {
             .map(|rank_ones| ZeroBits::convert_count(rank_ones, idx))
     }
 
-    fn select<W: OnesOrZeros>(&self, rank: u64) -> Option<u64> {
-        if rank >= W::convert_count(self.count_ones(), self.len()) {
+    fn read_select_hint_from_index<W: OnesOrZeros>(&self, target_rank: u64) -> Option<(u64, u64)> {
+        if target_rank >= W::convert_count(self.count_ones(), self.len()) {
             return None;
         }
 
-        let mut skip_bits = 0u64;
-        let mut skip_count_ones = 0u64;
-
-        let (_, l0_idx) = ternary_search_with_index(self.l0_index, |idx, l0_entry| {
-            // We can ignore that len might be smaller, because we already checked
-            // for the end condition above
-            let len = ((idx as u64) + 1) * size::BITS_PER_L0_BLOCK;
-            let count_ones_at_end_of_block = l0_entry.0;
-            let count_at_end_of_block = W::convert_count(count_ones_at_end_of_block, len);
-            count_at_end_of_block.cmp(&rank)
-        });
-
-        skip_bits += (l0_idx as u64) * size::BITS_PER_L0_BLOCK;
-        skip_count_ones += l0_idx
-            .checked_sub(1)
-            .map_or(0, |prev_block_idx| self.l0_index[prev_block_idx].0);
-        let l1l2_part = {
-            let lower = l0_idx * size::L1_BLOCKS_PER_L0_BLOCK;
-            let upper = core::cmp::min(lower + size::L1_BLOCKS_PER_L0_BLOCK, self.l1l2_index.len());
-            debug_assert!(lower < upper);
-            self.l1l2_index
-                .get(lower..upper)
-                .expect("Should be in range or there's a bug")
-        };
-
-        let (_, l1_first_index_gt) = ternary_search_with_index(l1l2_part, |idx, l1_entry| {
-            let len = (idx as u64) * size::BITS_PER_L1_BLOCK + skip_bits;
-            let rank_ones_at_start_of_block = l1_entry.unpack_raw()[0] as u64 + skip_count_ones;
-            let rank_at_start_of_block = W::convert_count(rank_ones_at_start_of_block, len);
-            rank_at_start_of_block.cmp(&rank)
-        });
-        debug_assert!(l1_first_index_gt.checked_sub(1).is_some());
-        let l1_idx = l1_first_index_gt.wrapping_sub(1);
-
-        skip_bits += (l1_idx as u64) * size::BITS_PER_L1_BLOCK;
-        let l2_index = l1l2_part[l1_idx].unpack();
-        let l2_first_index_gt = l2_index
-            .0
-            .iter()
-            .enumerate()
-            .position(|(idx, rank_ones_within_l0)| {
-                let len = (idx as u64) * size::BITS_PER_L2_BLOCK + skip_bits;
-                let rank_ones_at_start_of_block = *rank_ones_within_l0 as u64 + skip_count_ones;
-                let rank_at_start_of_block = W::convert_count(rank_ones_at_start_of_block, len);
-                rank_at_start_of_block > rank
-            })
-            .unwrap_or(l2_index.0.len());
-        debug_assert!(l2_first_index_gt.checked_sub(1).is_some());
-        let l2_idx = l1_first_index_gt.wrapping_sub(1);
-
-        skip_bits += (l2_idx as u64) * size::BITS_PER_L2_BLOCK;
-        skip_count_ones += l2_index.0[l2_idx] as u64;
-        let skip_count = W::convert_count(skip_count_ones, skip_bits);
-
-        let (_skipped, select_in) = self.data.split_at(skip_bits).expect("If it's out of range that's a bug");
-        let new_target =
-
-            rank.checked_sub(skip_count)
-                .expect("Shouldn't have skipped too much");
-        if W::is_ones() {
-            select_in.select_ones(new_target)
-        } else {
-            select_in.select_zeros(new_target)
+        fn read_rank_from_idx_or_bug<W: OnesOrZeros>(indexed: &IndexedBits, l2_blocks_from_start: u64) -> u64 {
+            let rank_ones = indexed.read_rank_ones_from_idx(l2_blocks_from_start)
+                .expect("If the index is not in range it's a bug");
+            W::convert_count(rank_ones, l2_blocks_from_start * size::BITS_PER_L2_BLOCK)
         }
+
+        let l2_blocks_range = 0..(self.data.len() / size::BITS_PER_L2_BLOCK);
+        let l2_block_with_higher_rank =
+            binary_search(l2_blocks_range, |l2_blocks_from_start| {
+                read_rank_from_idx_or_bug::<W>(self, l2_blocks_from_start) > target_rank
+            });
+        let l2_block_to_search_from =
+            l2_block_with_higher_rank.checked_sub(1)
+            .expect("The first block must have rank 0, so it can't have a higher rank");
+        let l2_block_rank = read_rank_from_idx_or_bug::<W>(self, l2_block_to_search_from);
+        let idx_to_search_from = l2_block_to_search_from * size::BITS_PER_L2_BLOCK;
+        let search_rank = target_rank.checked_sub(l2_block_rank).expect("If rank of hint is too high that's a bug");
+        Some((idx_to_search_from, search_rank))
     }
 
     pub fn select_ones(&self, rank: u64) -> Option<u64> {
-        self.select::<OneBits>(rank)
+        let (idx_to_search_from, further_search_rank) =
+            self.read_select_hint_from_index::<OneBits>(rank)?;
+        let (_data_to_ignore, data_to_search) = self.data.split_at(idx_to_search_from)
+            .expect("If the index of hint is out of range that's a bug");
+        let search_result =
+            data_to_search.select_ones(further_search_rank).expect("If the search rank is out of range that's a bug");
+        Some(idx_to_search_from + search_result)
     }
 
     pub fn select_zeros(&self, rank: u64) -> Option<u64> {
-        self.select::<ZeroBits>(rank)
+        let (idx_to_search_from, further_search_rank) =
+            self.read_select_hint_from_index::<ZeroBits>(rank)?;
+        let (_data_to_ignore, data_to_search) = self.data.split_at(idx_to_search_from)
+            .expect("If the index of hint is out of range that's a bug");
+        let search_result =
+            data_to_search.select_zeros(further_search_rank).expect("If the search rank is out of range that's a bug");
+        Some(idx_to_search_from + search_result)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bits_ref::Bits;
+    use crate::bits::Bits;
+    use crate::bits::tests::prepared_bits;
     use std::vec::Vec;
 
     impl IndexSize {
@@ -487,11 +453,13 @@ mod tests {
         // When the bit we are selecting is in the same block as the next index sample
         let mut data = vec![0xffu8; 8192 / 8 * 2];
         data[8192 / 8 - 1] = 0;
-        let data = Bits::from_bytes(&data[..], 0, 8192 * 2).unwrap();
+        let data = Bits::from(&data[..], 0, 8192 * 2).unwrap();
         let size = IndexSize::for_bits(data);
         let mut l0 = size.l0_vec();
         let mut l1l2 = size.l1l2_vec();
-        let index = IndexedBits::from_bits(l0.as_mut_slice(), l1l2.as_mut_slice(), data).unwrap();
+        let index =
+            IndexedBits::from_bits(l0.as_mut_slice(), l1l2.as_mut_slice(), data)
+                .unwrap();
         assert_eq!(index.select_ones(8191), Some(8199));
     }
 
@@ -510,7 +478,7 @@ mod tests {
             rng.fill_bytes(&mut data);
             data
         };
-        let data = Bits::from_bytes(&data[..], 0, n_bits).expect("Should have enough bytes");
+        let data = Bits::from(&data[..], 0, n_bits).expect("Should have enough bytes");
         let size = IndexSize::for_bits(data);
         let mut l0 = size.l0_vec();
         let mut l1l2 = size.l1l2_vec();
@@ -524,7 +492,7 @@ mod tests {
         assert_eq!(None, index.rank_ones(n_bits));
         assert_eq!(None, index.rank_zeros(n_bits));
 
-        let gen_sorted_in = |range: core::ops::Range<u64>| {
+        let mut gen_sorted_in = |range: core::ops::Range<u64>| {
             let mut r: Vec<u64> = (0..1000)
                 .map(|_| rng.gen_range(range.start, range.end))
                 .collect();

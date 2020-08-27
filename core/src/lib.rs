@@ -53,8 +53,7 @@ mod word;
 
 pub mod bits;
 
-// TODO: Bring back the actual indexing
-// pub mod index_raw;
+pub mod index_raw;
 
 #[cfg(test)]
 mod tests {
