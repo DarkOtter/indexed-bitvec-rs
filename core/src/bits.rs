@@ -59,11 +59,6 @@ fn split_idx(idx_bits: u64) -> (usize, usize) {
 
 const EMPTY_BYTES: &'static [u8] = &[];
 
-impl AllBits<&'static [u8]> {
-    pub const fn empty() -> Self {
-        Self(EMPTY_BYTES)
-    }
-}
 fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
     const WORD_ALIGNMENT: usize = core::mem::align_of::<u64>();
     const WORD_SIZE: usize = core::mem::size_of::<u64>();
@@ -111,6 +106,10 @@ fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
 const MIN_SIZE_TO_SPLIT_WORDS: usize = 16 * core::mem::size_of::<u64>();
 
 impl<'a> AllBits<&'a [u8]> {
+    pub const fn empty() -> Self {
+        Self(EMPTY_BYTES)
+    }
+
     #[inline]
     pub fn len(self) -> u64 {
         self.0.len() as u64 * 8
@@ -244,23 +243,17 @@ struct LeadingBits<T> {
     skipped_trailing_bits_count_ones: u8,
 }
 
-impl<T> From<AllBits<T>> for LeadingBits<T> {
-    fn from(all_bits: AllBits<T>) -> Self {
-        Self {
-            all_bits,
-            skip_trailing_bits: 0,
-            skipped_trailing_bits_count_ones: 0,
-        }
+const fn leading_from_all<T>(all_bits: AllBits<T>) -> LeadingBits<T> {
+    LeadingBits {
+        all_bits,
+        skip_trailing_bits: 0,
+        skipped_trailing_bits_count_ones: 0,
     }
 }
 
-impl LeadingBits<&'static [u8]> {
-    pub const fn empty() -> Self {
-        Self {
-            all_bits: AllBits::empty(),
-            skip_trailing_bits: 0,
-            skipped_trailing_bits_count_ones: 0,
-        }
+impl<T> From<AllBits<T>> for LeadingBits<T> {
+    fn from(all_bits: AllBits<T>) -> Self {
+        leading_from_all(all_bits)
     }
 }
 
@@ -273,6 +266,10 @@ fn get_partial_byte(all_bits: AllBits<&[u8]>, skip_trailing_bits: u8) -> u8 {
 }
 
 impl<'a> LeadingBits<&'a [u8]> {
+    pub const fn empty() -> Self {
+        leading_from_all(AllBits::empty())
+    }
+
     pub fn from(all_bits: AllBits<&'a [u8]>, len: u64) -> Option<Self> {
         if len > all_bits.len() {
             return None;
@@ -369,17 +366,8 @@ impl<'a> LeadingBits<&'a [u8]> {
                 trailing_part.leading_bits.skipped_trailing_bits_count_ones =
                     self.skipped_trailing_bits_count_ones;
                 debug_assert!(
-                    !(trailing_part.leading_bits.all_bits.is_empty()
-                        && trailing_part.leading_bits.skip_trailing_bits != 0)
-                );
-                debug_assert!(
-                    trailing_part.skip_leading_bits + trailing_part.leading_bits.skip_trailing_bits
-                        <= 8
-                );
-                debug_assert!(
-                    trailing_part.skip_leading_bits + trailing_part.leading_bits.skip_trailing_bits
-                        == 0
-                        || !trailing_part.leading_bits.all_bits.0.is_empty()
+                    (trailing_part.leading_bits.all_bits.0.len() as u64 * 8)
+                    >= (trailing_part.leading_bits.skip_trailing_bits + trailing_part.skip_leading_bits) as u64
                 );
                 (leading_part, trailing_part)
             })
@@ -396,13 +384,17 @@ pub struct Bits<T> {
 
 pub type BitsRef<'a> = Bits<&'a [u8]>;
 
+const fn bits_from_leading<T>(leading_bits: LeadingBits<T>) -> Bits<T> {
+    Bits {
+        leading_bits,
+        skip_leading_bits: 0,
+        skipped_leading_bits_count_ones: 0,
+    }
+}
+
 impl<T> From<LeadingBits<T>> for Bits<T> {
     fn from(leading_bits: LeadingBits<T>) -> Self {
-        Self {
-            leading_bits,
-            skip_leading_bits: 0,
-            skipped_leading_bits_count_ones: 0,
-        }
+        bits_from_leading(leading_bits)
     }
 }
 
@@ -412,17 +404,11 @@ impl<T> From<AllBits<T>> for Bits<T> {
     }
 }
 
-impl Bits<&'static [u8]> {
-    pub const fn empty() -> Self {
-        Self {
-            leading_bits: LeadingBits::empty(),
-            skip_leading_bits: 0,
-            skipped_leading_bits_count_ones: 0,
-        }
-    }
-}
-
 impl<'a> Bits<&'a [u8]> {
+    pub const fn empty() -> Self {
+        bits_from_leading(LeadingBits::empty())
+    }
+
     pub fn from(bytes: &'a [u8], pos: u64, len: u64) -> Option<Self> {
         let (skip_bytes, skip_leading_bits) = split_idx(pos);
         let skip_leading_bits = skip_leading_bits as u8;
@@ -748,6 +734,32 @@ pub mod tests {
     use std::ops::Range;
     use std::vec::Vec;
 
+    fn same_thing<T: ?Sized>(left: &T, right: &T) -> bool {
+        (left as *const T) == (right as *const T)
+    }
+
+    fn same_slice<T>(left: &[T], right: &[T]) -> bool {
+        same_thing(left, right)
+    }
+
+    fn phys_equal_all_bits<T>(left: AllBits<&[T]>, right: AllBits<&[T]>) -> bool {
+        let AllBits(left) = left;
+        let AllBits(right) = right;
+        same_slice(left, right)
+    }
+
+    fn phys_equal_leading_bits<T>(left: LeadingBits<&[T]>, right: LeadingBits<&[T]>) -> bool {
+        let LeadingBits { all_bits: left_all, skip_trailing_bits: left_skip, skipped_trailing_bits_count_ones: left_count} = left;
+        let LeadingBits { all_bits: right_all, skip_trailing_bits: right_skip, skipped_trailing_bits_count_ones: right_count } = right;
+        phys_equal_all_bits(left_all, right_all) && left_skip == right_skip && left_count == right_count
+    }
+
+    fn phys_equal_bits<T>(left: Bits<&[T]>, right: Bits<&[T]>) -> bool {
+        let Bits { leading_bits: left_leading, skip_leading_bits: left_skip, skipped_leading_bits_count_ones: left_count } = left;
+        let Bits { leading_bits: right_leading, skip_leading_bits: right_skip, skipped_leading_bits_count_ones: right_count } = left;
+        phys_equal_leading_bits(left_leading, right_leading) && left_skip == right_skip && left_count == right_count
+    }
+
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub struct SkipLeadingInfo {
         bytes: u8,
@@ -806,7 +818,7 @@ pub mod tests {
 
     pub fn prepared_bits() -> impl Strategy<Value = PreparedBits> {
         // TODO: Up the default size
-        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..17, meta))
+        skip_leading_info().prop_flat_map(|meta| prepared_bits_with_len_range(0..64, meta))
     }
 
     impl PreparedBits {
@@ -1127,6 +1139,48 @@ pub mod tests {
             assert!(bits.select_ones(counts[1]).is_none());
             assert!(bits.select_zeros(counts[0]).is_none());
         }
+
+        #[test]
+        fn test_split_at_in_range(setup in
+            prepared_bits().prop_flat_map(|prepared_bits| {
+                let len = prepared_bits.bits().len();
+                (0..=len).prop_map(move |split_at| (prepared_bits.clone(), split_at))
+            })
+        ) {
+            let (prepared_bits, split_at) = setup;
+            let bits = prepared_bits.bits();
+            let split = bits.split_at(split_at);
+            assert!(split.is_some());
+            let (left, right) = split.unwrap();
+            assert_eq!(left.len(), split_at);
+            assert_eq!(split_at + right.len(), bits.len());
+
+            (0..split_at).for_each(|idx| {
+                assert!(left.get(idx).is_some());
+                assert_eq!(left.get(idx), bits.get(idx));
+            });
+            assert!(left.get(split_at).is_none());
+            (0..(bits.len()-split_at)).for_each(|idx| {
+                assert!(right.get(idx).is_some());
+                assert_eq!(right.get(idx), bits.get(split_at + idx));
+            });
+            assert!(right.get(bits.len() - split_at).is_none());
+        }
+
+        #[test]
+        fn test_split_at_out_of_range(prepared_bits in prepared_bits()) {
+            let bits = prepared_bits.bits();
+            (1..=256).for_each(|overflow| {
+                assert!(bits.split_at(bits.len() + overflow).is_none());
+            });
+        }
+    }
+
+    fn slice_via_split(bits: Bits<&[u8]>, range: Range<u64>) -> Option<Bits<&[u8]>> {
+        let Range { start, end } = range;
+        bits.split_at(end).and_then(|(before_end, _)| {
+            before_end.split_at(start).map(|(_, after_start)| after_start)
+        })
     }
 
     /* TODO: Add testing:
