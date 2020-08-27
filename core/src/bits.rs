@@ -748,7 +748,7 @@ pub mod tests {
 
     fn phys_equal_bits<T>(left: Bits<&[T]>, right: Bits<&[T]>) -> bool {
         let Bits { leading_bits: left_leading, skip_leading_bits: left_skip, skipped_leading_bits_count_ones: left_count } = left;
-        let Bits { leading_bits: right_leading, skip_leading_bits: right_skip, skipped_leading_bits_count_ones: right_count } = left;
+        let Bits { leading_bits: right_leading, skip_leading_bits: right_skip, skipped_leading_bits_count_ones: right_count } = right;
         phys_equal_leading_bits(left_leading, right_leading) && left_skip == right_skip && left_count == right_count
     }
 
