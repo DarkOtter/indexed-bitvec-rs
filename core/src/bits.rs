@@ -15,11 +15,9 @@
 */
 //! Type to represent a reference to some bits, and basic count/rank/select functions for it.
 //!
-use crate::ceil_div_u64;
-use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
+use crate::import::prelude::*;
 // TODO: Make select_ones_u8
 use crate::word::select_ones_u16;
-use core::ops::Range;
 
 fn add_should_not_overflow(a: u64, b: u64) -> u64 {
     debug_assert!(
@@ -60,8 +58,8 @@ fn split_idx(idx_bits: u64) -> (usize, usize) {
 const EMPTY_BYTES: &'static [u8] = &[];
 
 fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
-    const WORD_ALIGNMENT: usize = core::mem::align_of::<u64>();
-    const WORD_SIZE: usize = core::mem::size_of::<u64>();
+    const WORD_ALIGNMENT: usize = align_of::<u64>();
+    const WORD_SIZE: usize = size_of::<u64>();
 
     let total_bytes = data.len();
     if total_bytes < WORD_ALIGNMENT {
@@ -94,7 +92,7 @@ fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
     let last_part = unsafe { data.get_unchecked(last_range) };
 
     let words: &[u64] = unsafe {
-        use core::slice::from_raw_parts;
+        use crate::import::slice::from_raw_parts;
         debug_assert_eq!((words_part.as_ptr() as usize) % WORD_ALIGNMENT, 0);
         let ptr = words_part.as_ptr() as *const u64;
         from_raw_parts(ptr, n_words)
@@ -103,7 +101,7 @@ fn bytes_as_u64s(data: &[u8]) -> (&[u8], &[u64], &[u8]) {
     (first_part, words, last_part)
 }
 
-const MIN_SIZE_TO_SPLIT_WORDS: usize = 16 * core::mem::size_of::<u64>();
+const MIN_SIZE_TO_SPLIT_WORDS: usize = 16 * size_of::<u64>();
 
 impl<'a> AllBits<&'a [u8]> {
     pub const fn empty() -> Self {
@@ -404,7 +402,7 @@ impl<T> From<AllBits<T>> for Bits<T> {
     }
 }
 
-impl<'a> Bits<&'a [u8]> {
+impl<'a> BitsRef<'a> {
     pub const fn empty() -> Self {
         bits_from_leading(LeadingBits::empty())
     }
@@ -662,7 +660,7 @@ impl<'a> Iterator for ChunksIter<'a> {
             if iter.data.is_empty() {
                 None
             } else {
-                Some(core::mem::replace(&mut iter.data, Bits::empty()))
+                Some(replace(&mut iter.data, Bits::empty()))
             }
         }
 
@@ -712,7 +710,7 @@ impl<'a> Iterator for ChunksIter<'a> {
     }
 }
 
-impl<'a> core::iter::ExactSizeIterator for ChunksIter<'a> {
+impl<'a> crate::import::iter::ExactSizeIterator for ChunksIter<'a> {
     fn len(&self) -> usize {
         ceil_div_u64(self.data.len(), self.bits_in_chunk) as usize
     }
@@ -720,37 +718,12 @@ impl<'a> core::iter::ExactSizeIterator for ChunksIter<'a> {
 
 #[cfg(test)]
 pub mod tests {
+    // TODO: Add basic/example cases to all tests
+
     use super::*;
     use proptest::collection::SizeRange;
     use proptest::prelude::*;
-    use std::ops::Range;
-    use std::vec::Vec;
-
-    fn same_thing<T: ?Sized>(left: &T, right: &T) -> bool {
-        (left as *const T) == (right as *const T)
-    }
-
-    fn same_slice<T>(left: &[T], right: &[T]) -> bool {
-        same_thing(left, right)
-    }
-
-    fn phys_equal_all_bits<T>(left: AllBits<&[T]>, right: AllBits<&[T]>) -> bool {
-        let AllBits(left) = left;
-        let AllBits(right) = right;
-        same_slice(left, right)
-    }
-
-    fn phys_equal_leading_bits<T>(left: LeadingBits<&[T]>, right: LeadingBits<&[T]>) -> bool {
-        let LeadingBits { all_bits: left_all, skip_trailing_bits: left_skip, skipped_trailing_bits_count_ones: left_count} = left;
-        let LeadingBits { all_bits: right_all, skip_trailing_bits: right_skip, skipped_trailing_bits_count_ones: right_count } = right;
-        phys_equal_all_bits(left_all, right_all) && left_skip == right_skip && left_count == right_count
-    }
-
-    fn phys_equal_bits<T>(left: Bits<&[T]>, right: Bits<&[T]>) -> bool {
-        let Bits { leading_bits: left_leading, skip_leading_bits: left_skip, skipped_leading_bits_count_ones: left_count } = left;
-        let Bits { leading_bits: right_leading, skip_leading_bits: right_skip, skipped_leading_bits_count_ones: right_count } = right;
-        phys_equal_leading_bits(left_leading, right_leading) && left_skip == right_skip && left_count == right_count
-    }
+    use crate::import::Vec;
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub struct SkipLeadingInfo {
@@ -1167,25 +1140,4 @@ pub mod tests {
             });
         }
     }
-
-    fn slice_via_split(bits: Bits<&[u8]>, range: Range<u64>) -> Option<Bits<&[u8]>> {
-        let Range { start, end } = range;
-        bits.split_at(end).and_then(|(before_end, _)| {
-            before_end.split_at(start).map(|(_, after_start)| after_start)
-        })
-    }
-
-    /* TODO: Add testing:
-
-    Probably work via testing len/get, then testing split on this basis, then
-    using split & get to test various things.
-
-    - test_get
-    - test_count
-    - test_rank
-    - test_select
-    - test eq
-
-
-    */
 }

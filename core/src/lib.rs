@@ -17,7 +17,7 @@
 //! fast rank & select operations on bitvectors.
 #![no_std]
 
-#[cfg(test)]
+#[cfg(any(test, feature = "std"))]
 #[macro_use]
 extern crate std;
 
@@ -33,18 +33,40 @@ extern crate quickcheck;
 #[cfg(test)]
 extern crate proptest;
 
-#[cold]
-const fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
-    n / d + ((n % d > 0) as u64)
-}
+mod import {
+    pub mod prelude {
+        pub use core::ops::Range;
+        pub use core::mem::{replace, align_of, size_of};
+        pub use crate::ones_or_zeros::{OnesOrZeros, OneBits, ZeroBits};
+        pub use core::cmp::{min, max};
 
-#[inline(always)]
-pub(crate) fn ceil_div_u64(n: u64, d: u64) -> u64 {
-    let nb = n.wrapping_add(d - 1);
-    if nb < n {
-        return ceil_div_u64_slow(n, d);
-    };
-    nb / d
+        #[cold]
+        pub const fn ceil_div_u64_slow(n: u64, d: u64) -> u64 {
+            n / d + ((n % d > 0) as u64)
+        }
+
+        #[inline(always)]
+        pub fn ceil_div_u64(n: u64, d: u64) -> u64 {
+            let nb = n.wrapping_add(d - 1);
+            if nb < n {
+                return ceil_div_u64_slow(n, d);
+            };
+            nb / d
+        }
+    }
+
+    pub use core::slice;
+    pub use core::iter;
+
+    #[cfg(any(test, feature = "std"))]
+    pub use std::vec::Vec;
+    #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
+    pub use alloc::vec::Vec;
+
+    #[cfg(any(test, feature = "std"))]
+    pub use std::boxed::Box;
+    #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
+    pub use alloc::boxed::Box;
 }
 
 mod ones_or_zeros;
@@ -58,6 +80,7 @@ pub mod index_raw;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use import::prelude::*;
     use proptest::prelude::*;
 
     #[test]

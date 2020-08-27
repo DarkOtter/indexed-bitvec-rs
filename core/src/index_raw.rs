@@ -20,10 +20,8 @@
 //! so you may run into panics from e.g. out of bounds accesses
 //! to slices. They should all be memory-safe though.
 
-use crate::bits::BitsRef;
-use crate::ceil_div_u64;
-use crate::ones_or_zeros::{OneBits, OnesOrZeros, ZeroBits};
-use core::ops::Range;
+use crate::import::prelude::*;
+use crate::bits::{BitsRef};
 
 mod size {
     use super::*;
@@ -160,15 +158,24 @@ impl L1L2Entry {
     }
 }
 
-pub struct IndexedBits<'a> {
-    l0_index: &'a [L0Entry],
-    l1l2_index: &'a [L1L2Entry],
-    data: BitsRef<'a>,
+#[derive(Debug, Copy, Clone)]
+pub struct IndexStorage<Upper, Lower> {
+    l0: Upper,
+    l1l2: Lower,
 }
 
-fn zip_eq<L, R>(left: L, right: R) -> core::iter::Zip<L, R>
-where L: core::iter::ExactSizeIterator,
-R: core::iter::ExactSizeIterator,
+pub type IndexRef<'a> = IndexStorage<&'a [L0Entry], &'a [L1L2Entry]>;
+
+pub struct IndexedBits<Bits, Index> {
+    index: Index,
+    data: Bits,
+}
+
+pub type IndexedBitsRef<'a> = IndexedBits<BitsRef<'a>, IndexRef<'a>>;
+
+fn zip_eq<L, R>(left: L, right: R) -> crate::import::iter::Zip<L, R>
+where L: crate::import::iter::ExactSizeIterator,
+R: crate::import::iter::ExactSizeIterator,
 {
     debug_assert_eq!(left.len(), right.len(), "Iterators are expected to have the same length");
     left.zip(right)
@@ -249,8 +256,8 @@ fn build_index<'a, 'b>(
 fn midpoint(a: u64, b: u64) -> u64 {
     #[cfg(debug_assertions)]
     fn check_midpoint(a: u64, b: u64, mid: u64) -> bool {
-        let min = core::cmp::min(a, b);
-        let max = core::cmp::max(a, b);
+        let min = min(a, b);
+        let max = max(a, b);
         mid >= min && mid <= max
         && max - (mid - min + mid) <= 1
     }
@@ -297,15 +304,69 @@ fn binary_search(
     in_range.start
 }
 
-impl<'a> IndexedBits<'a> {
+impl<'a> IndexRef<'a> {
+    pub fn count_ones(&self) -> u64 {
+        self.l0.last().map_or(0, |x| x.0)
+    }
+
+    fn rank_ones_hint(&self, l2_blocks_from_start: u64) -> Option<u64> {
+        let l1_blocks_from_start = (l2_blocks_from_start / size::L2_BLOCKS_PER_L1_BLOCK) as usize;
+        let &l1l2_entry = self.l1l2.get(l1_blocks_from_start)?;
+
+        let l2_idx = (l2_blocks_from_start % size::L2_BLOCKS_PER_L1_BLOCK) as usize;
+        let l0_idx = l1_blocks_from_start / size::L1_BLOCKS_PER_L0_BLOCK;
+
+        let l0_rank = if l0_idx == 0 {
+            0
+        } else {
+            let get_idx = l0_idx.wrapping_sub(1);
+            debug_assert!(self.l0.get(get_idx).is_some());
+            unsafe { self.l0.get_unchecked(get_idx) }.0
+        };
+
+        let l1l2_rank = {
+            let l2_index = l1l2_entry.unpack();
+            debug_assert!(l2_index.0.get(l2_idx).is_some());
+            *unsafe { l2_index.0.get_unchecked(l2_idx) }
+        };
+
+        Some(l0_rank + l1l2_rank as u64)
+    }
+
+    fn rank_hint<W: OnesOrZeros>(&self, l2_blocks_from_start: u64) -> Option<u64> {
+        self.rank_ones_hint(l2_blocks_from_start).map(|rank_ones| {
+            W::convert_count(rank_ones, l2_blocks_from_start * size::BITS_PER_L2_BLOCK)
+        })
+    }
+
+    fn select_hint<W: OnesOrZeros>(&self, target_rank: u64) -> (u64, u64) {
+        let total_l2_blocks = (self.l1l2.len() as u64) * size::L2_BLOCKS_PER_L1_BLOCK;
+        let l2_block_with_higher_rank =
+            binary_search(0..total_l2_blocks, |l2_blocks_from_start| {
+                self.rank_hint::<W>(l2_blocks_from_start)
+                    .expect("If it's not in range that's a bug")
+                > target_rank
+            });
+        let l2_block_to_search_from =
+            l2_block_with_higher_rank.checked_sub(1)
+                .expect("The first block must have rank 0, so it can't have a higher rank");
+        let l2_block_rank =
+            self.rank_hint::<W>(l2_block_to_search_from)
+                .expect("If it's not in range that's a bug");
+        let idx_to_search_from = l2_block_to_search_from * size::BITS_PER_L2_BLOCK;
+        let search_rank = target_rank.checked_sub(l2_block_rank).expect("If rank of hint is too high that's a bug");
+        (idx_to_search_from, search_rank)
+    }
+}
+
+impl<'a> IndexedBitsRef<'a> {
     pub(crate) unsafe fn from_existing_index(
         l0_index: &'a [L0Entry],
         l1l2_index: &'a [L1L2Entry],
         data: BitsRef<'a>,
     ) -> Self {
         Self {
-            l0_index,
-            l1l2_index,
+            index: IndexStorage { l0: l0_index, l1l2: l1l2_index },
             data,
         }
     }
@@ -324,35 +385,11 @@ impl<'a> IndexedBits<'a> {
     }
 
     pub fn count_ones(&self) -> u64 {
-        self.l0_index.last().map_or(0, |entry| entry.0)
+        self.index.count_ones()
     }
 
     pub fn count_zeros(&self) -> u64 {
         ZeroBits::convert_count(self.count_ones(), self.len())
-    }
-
-    fn read_rank_ones_from_idx(&self, l2_blocks_from_start: u64) -> Option<u64> {
-        let l1_blocks_from_start = (l2_blocks_from_start / size::L2_BLOCKS_PER_L1_BLOCK) as usize;
-        let &l1l2_entry = self.l1l2_index.get(l1_blocks_from_start)?;
-
-        let l2_idx = (l2_blocks_from_start % size::L2_BLOCKS_PER_L1_BLOCK) as usize;
-        let l0_idx = l1_blocks_from_start / size::L1_BLOCKS_PER_L0_BLOCK;
-
-        let l0_rank = if l0_idx == 0 {
-            0
-        } else {
-            let get_idx = l0_idx.wrapping_sub(1);
-            debug_assert!(self.l0_index.get(get_idx).is_some());
-            unsafe { self.l0_index.get_unchecked(get_idx) }.0
-        };
-
-        let l1l2_rank = {
-            let l2_index = l1l2_entry.unpack();
-            debug_assert!(l2_index.0.get(l2_idx).is_some());
-            *unsafe { l2_index.0.get_unchecked(l2_idx) }
-        };
-
-        Some(l0_rank + l1l2_rank as u64)
     }
 
     pub fn rank_ones(&self, idx: u64) -> Option<u64> {
@@ -373,7 +410,7 @@ impl<'a> IndexedBits<'a> {
             };
 
             let rank_from_index =
-                self.read_rank_ones_from_idx(l2_blocks_from_start)
+                self.index.rank_ones_hint(l2_blocks_from_start)
                     .expect("If the index is not in range it's a bug");
 
             Some(rank_from_index + rank_from_data)
@@ -385,34 +422,12 @@ impl<'a> IndexedBits<'a> {
             .map(|rank_ones| ZeroBits::convert_count(rank_ones, idx))
     }
 
-    fn read_select_hint_from_index<W: OnesOrZeros>(&self, target_rank: u64) -> Option<(u64, u64)> {
-        if target_rank >= W::convert_count(self.count_ones(), self.len()) {
+    pub fn select_ones(&self, rank: u64) -> Option<u64> {
+        if rank >= self.count_ones() {
             return None;
         }
-
-        fn read_rank_from_idx_or_bug<W: OnesOrZeros>(indexed: &IndexedBits, l2_blocks_from_start: u64) -> u64 {
-            let rank_ones = indexed.read_rank_ones_from_idx(l2_blocks_from_start)
-                .expect("If the index is not in range it's a bug");
-            W::convert_count(rank_ones, l2_blocks_from_start * size::BITS_PER_L2_BLOCK)
-        }
-
-        let l2_blocks_range = 0..(self.data.len() / size::BITS_PER_L2_BLOCK);
-        let l2_block_with_higher_rank =
-            binary_search(l2_blocks_range, |l2_blocks_from_start| {
-                read_rank_from_idx_or_bug::<W>(self, l2_blocks_from_start) > target_rank
-            });
-        let l2_block_to_search_from =
-            l2_block_with_higher_rank.checked_sub(1)
-            .expect("The first block must have rank 0, so it can't have a higher rank");
-        let l2_block_rank = read_rank_from_idx_or_bug::<W>(self, l2_block_to_search_from);
-        let idx_to_search_from = l2_block_to_search_from * size::BITS_PER_L2_BLOCK;
-        let search_rank = target_rank.checked_sub(l2_block_rank).expect("If rank of hint is too high that's a bug");
-        Some((idx_to_search_from, search_rank))
-    }
-
-    pub fn select_ones(&self, rank: u64) -> Option<u64> {
         let (idx_to_search_from, further_search_rank) =
-            self.read_select_hint_from_index::<OneBits>(rank)?;
+            self.index.select_hint::<OneBits>(rank);
         let (_data_to_ignore, data_to_search) = self.data.split_at(idx_to_search_from)
             .expect("If the index of hint is out of range that's a bug");
         let search_result =
@@ -421,8 +436,11 @@ impl<'a> IndexedBits<'a> {
     }
 
     pub fn select_zeros(&self, rank: u64) -> Option<u64> {
+        if rank >= self.count_zeros() {
+            return None;
+        }
         let (idx_to_search_from, further_search_rank) =
-            self.read_select_hint_from_index::<ZeroBits>(rank)?;
+            self.index.select_hint::<ZeroBits>(rank);
         let (_data_to_ignore, data_to_search) = self.data.split_at(idx_to_search_from)
             .expect("If the index of hint is out of range that's a bug");
         let search_result =
@@ -436,7 +454,7 @@ mod tests {
     use super::*;
     use crate::bits::Bits;
     use crate::bits::tests::prepared_bits;
-    use std::vec::Vec;
+    use crate::import::Vec;
 
     impl IndexSize {
         fn l0_vec(&self) -> Vec<L0Entry> {
@@ -492,7 +510,7 @@ mod tests {
         assert_eq!(None, index.rank_ones(n_bits));
         assert_eq!(None, index.rank_zeros(n_bits));
 
-        let mut gen_sorted_in = |range: core::ops::Range<u64>| {
+        let mut gen_sorted_in = |range: Range<u64>| {
             let mut r: Vec<u64> = (0..1000)
                 .map(|_| rng.gen_range(range.start, range.end))
                 .collect();

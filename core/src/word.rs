@@ -205,8 +205,7 @@ impl Word {
 mod tests {
     use super::*;
     use quickcheck::Arbitrary;
-    use std::boxed::Box;
-    use std::vec::Vec;
+    use crate::import::{Box, Vec};
 
     impl Arbitrary for Word {
         fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
