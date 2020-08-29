@@ -122,7 +122,7 @@ impl<'a> AllBits<&'a [u8]> {
         let data = self.0;
         let (byte_idx, idx_in_byte) = split_idx(idx_bits);
 
-        let byte = data.get_unchecked(byte_idx);
+        let byte = *data.get_unchecked(byte_idx);
         let mask = 0x80 >> idx_in_byte;
         (byte & mask) != 0
     }
@@ -715,6 +715,76 @@ impl<'a> crate::import::iter::ExactSizeIterator for ChunksIter<'a> {
         ceil_div_u64(self.data.len(), self.bits_in_chunk) as usize
     }
 }
+
+pub type BitsRefMut<'a> = Bits<&'a mut [u8]>;
+
+impl<'a> AllBits<&'a mut [u8]> {
+    unsafe fn replace_unchecked(self, idx_bits: u64, with: bool) -> bool {
+        let (byte_idx, idx_in_byte) = split_idx(idx_bits);
+        let idx_in_byte = idx_in_byte as u8;
+        let ptr = self.0.get_unchecked_mut(byte_idx);
+
+        let prev_byte = *ptr;
+        let other_bits = prev_byte & !mask;
+        debug_assert!(7u8.checked_sub(idx_in_byte).is_some());
+        let new_bit = (with as u8) << (7u8.wrapping_sub(idx_in_byte));
+        let new_byte = other_bits | new_bit;
+        *ptr = new_byte;
+
+        let mask = 0x80 >> idx_in_byte;
+        debug_assert!(new_bit == mask || new_bit == 0);
+        (prev_byte & mask) != 0
+    }
+}
+
+impl<'a> LeadingBits<&'a mut [u8]> {
+    pub fn replace(self, idx_bits: u64, with: bool) -> Option<bool> {
+        if idx_bits >= self.len() {
+            None
+        } else {
+            Some(unsafe { self.all_bits.replace_unchecked(idx_bits, with) })
+        }
+    }
+}
+
+impl<'a> BitsRefMut<'a> {
+    pub fn replace(self, idx_bits: u64, with: bool) -> Option<bool> {
+        // If this overflows then it must be out of range
+        let actual_idx = idx_bits.checked_add(self.skip_leading_bits as u64)?;
+        self.leading_bits.replace(actual_idx, with)
+    }
+}
+
+
+#[cfg(any(test, feature = "alloc", feature = "std"))]
+mod vec {
+    use super::*;
+    use crate::import::Vec;
+
+    pub type BitsVec = Bits<Vec<u8>>;
+
+    impl<T: crate::import::Deref<Target=[u8]>> Bits<T> {
+        fn generic_bits(&self) -> BitsRef {
+            let data =
+                self.leading_bits.all_bits.0.deref();
+            let all_bits = AllBits::from(data);
+            let leading_bits = LeadingBits { all_bits, ..self.leading_bits };
+            Bits { leading_bits,
+                skip_leading_bits: self.skip_leading_bits,
+                skipped_leading_bits_count_ones: self.skipped_leading_bits_count_ones,
+            }
+        }
+    }
+
+    impl BitsVec {
+        pub fn bits(&self) -> BitsRef {
+            self.generic_bits()
+        }
+    }
+}
+
+#[cfg(any(test, feature = "alloc", feature = "std"))]
+pub use vec::*;
 
 #[cfg(test)]
 pub mod tests {

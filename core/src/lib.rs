@@ -67,9 +67,49 @@ mod import {
     pub use std::boxed::Box;
     #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
     pub use alloc::boxed::Box;
+
+    pub use core::ops::Deref;
 }
 
+
 mod ones_or_zeros;
+
+trait Bits {
+    fn len(&self) -> u64;
+    fn get(&self, idx: u64) -> Option<bool>;
+    fn count_ones(&self) -> u64;
+    fn count_zeros(&self) -> u64 {
+        use crate::import::prelude::*;
+        ZeroBits::convert_count(self.count_ones(), self.len())
+    }
+    fn rank_ones(&self, idx: u64) -> Option<u64>;
+    fn rank_zeros(&self, idx: u64) -> Option<u64> {
+        use crate::import::prelude::*;
+        let rank_ones = self.rank_ones(idx)?;
+        Some(ZeroBits::convert_count(rank_ones, idx))
+    }
+    fn select_ones(&self, idx: u64) -> Option<u64>;
+    fn select_zeros(&self, idx: u64) -> Option<u64>;
+}
+
+trait BitsSplit {
+    fn split_at(self, mid: u64) -> Option<(Self, Self)>;
+}
+
+trait BitsMut {
+    fn replace(&mut self, idx: u64, with: bool) -> bool;
+    fn set(&mut self, idx: u64, to: bool) {
+        self.replace(idx, to);
+    }
+}
+
+trait BitsSplitMut {
+    fn split_at_mut(self, mid: u64) -> Option<(Self, Self)>;
+}
+
+trait BitsVec {
+    fn push(&mut self, bit: bool);
+}
 
 mod word;
 
