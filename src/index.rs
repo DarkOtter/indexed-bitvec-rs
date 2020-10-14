@@ -15,16 +15,11 @@
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-//! The raw functions for building and using rank/select indexes.
-//!
-//! The functions here do minimal if any checking on the size
-//! or validity of indexes vs. the bitvectors they are used with,
-//! so you may run into panics from e.g. out of bounds accesses
-//! to slices. They should all be memory-safe though.
-
 use crate::import::prelude::*;
 use crate::bits::{BitsRef};
 use crate::bits_traits::{OnesOrZeros, ZeroBits, OneBits};
+
+// TODO: Setup/check testing
 
 mod size {
     use super::*;

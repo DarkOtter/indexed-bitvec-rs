@@ -66,12 +66,14 @@ mod import {
 }
 
 mod word;
+pub use word::Word;
 
 pub mod bits;
+pub mod index;
 
-pub mod index_raw;
-
+// TODO: Force documentation
 // TODO: Look at adding doctests
+// TODO: Review public interface
 
 #[cfg(test)]
 mod tests {

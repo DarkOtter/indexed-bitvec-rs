@@ -16,9 +16,7 @@
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// TODO: Remove
 /// Supply to generic functions to work with/count set bits (ones).
-#[allow(dead_code)]
 pub(crate) enum OneBits {}
 
 /// Supply to generic functions to work with/count unset bits (zeros).

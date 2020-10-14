@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Test" type="CargoCommandRunConfiguration" factoryName="Cargo Command" singleton="false">
+  <configuration default="false" name="Test" type="CargoCommandRunConfiguration" factoryName="Cargo Command" singleton="false" nameIsGenerated="true">
     <option name="channel" value="DEFAULT" />
-    <option name="command" value="test --package indexed_bitvec_core:5.0.0" />
+    <option name="command" value="test --all" />
     <option name="allFeatures" value="true" />
     <option name="emulateTerminal" value="false" />
     <option name="backtrace" value="SHORT" />
