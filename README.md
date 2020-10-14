@@ -9,6 +9,15 @@ allow fast rank and select operations.
 This library is based on the design proposed by Zhou, Andersen and Kaminsky in
 *Space–Efficient, High–Performance Rank & Select Structures on Uncompressed Bit Sequences*.
 
+## Licensing
+
+This library is licensed under the GNU General Public License as published by
+the Free Software Foundation, either version 3 or a later version.
+
+If you would be interested in paying for a non-GPL commercial license please
+open an issue on the [github repository](https://github.com/DarkOtter/indexed-bitvec-rs)
+or otherwise contact me to discuss.
+
 ## See also
 
 I think there is an implementation of the same approach in a

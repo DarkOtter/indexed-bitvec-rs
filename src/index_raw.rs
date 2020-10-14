@@ -1,18 +1,20 @@
 /*
-   Copyright 2018 DarkOtter
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
+ * A part of indexed-bitvec-rs, a library implementing bitvectors with fast rank operations.
+ *     Copyright (C) 2020  DarkOtter
+ *
+ *     This program is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     This program is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 //! The raw functions for building and using rank/select indexes.
 //!
 //! The functions here do minimal if any checking on the size
@@ -22,6 +24,7 @@
 
 use crate::import::prelude::*;
 use crate::bits::{BitsRef};
+use crate::bits_traits::{OnesOrZeros, ZeroBits, OneBits};
 
 mod size {
     use super::*;
@@ -452,9 +455,8 @@ impl<'a> IndexedBitsRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bits::Bits;
-    use crate::bits::tests::prepared_bits;
-    use crate::import::Vec;
+    use crate::word::Word;
+    use crate::bits::BitsOf;
 
     impl IndexSize {
         fn l0_vec(&self) -> Vec<L0Entry> {
@@ -466,37 +468,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn select_bug_issue_15() {
-        // When the bit we are selecting is in the same block as the next index sample
-        let mut data = vec![0xffu8; 8192 / 8 * 2];
-        data[8192 / 8 - 1] = 0;
-        let data = Bits::from(&data[..], 0, 8192 * 2).unwrap();
-        let size = IndexSize::for_bits(data);
-        let mut l0 = size.l0_vec();
-        let mut l1l2 = size.l1l2_vec();
-        let index =
-            IndexedBits::from_bits(l0.as_mut_slice(), l1l2.as_mut_slice(), data)
-                .unwrap();
-        assert_eq!(index.select_ones(8191), Some(8199));
+    fn lower_u32_of_u64(x: u64) -> u32 {
+        (x & (!0u32) as u64) as u32
     }
 
     #[test]
     fn small_indexed_tests() {
-        use rand::{Rng, RngCore, SeedableRng};
-        use rand_xorshift::XorShiftRng;
         let n_bits: u64 = (1 << 19) - 1;
-        let n_bytes: usize = ceil_div_u64(n_bits, 8) as usize;
-        let seed = [
-            42, 73, 197, 231, 255, 43, 87, 05, 50, 13, 74, 107, 195, 231, 5, 1,
-        ];
-        let mut rng = XorShiftRng::from_seed(seed);
+        let n_words: usize = ceil_div_u64(n_bits, Word::len()) as usize;
+        use oorandom::Rand64;
+        let mut rng = Rand64::new( 427319723125543870550137410719523151);
         let data = {
-            let mut data = vec![0u8; n_bytes];
-            rng.fill_bytes(&mut data);
+            let mut data = vec![Word::zeros(); n_words];
+            data.iter_mut().for_each(|cell| *cell = Word::from(lower_u32_of_u64(rng.rand_u64())));
             data
         };
-        let data = Bits::from(&data[..], 0, n_bits).expect("Should have enough bytes");
+        let data = BitsOf::from(data.as_slice());
+        let data = data.split_at(n_bits).unwrap().0;
         let size = IndexSize::for_bits(data);
         let mut l0 = size.l0_vec();
         let mut l1l2 = size.l1l2_vec();
@@ -504,6 +492,7 @@ mod tests {
 
         let expected_count_ones = data.count_ones();
         let expected_count_zeros = n_bits - expected_count_ones;
+        assert_eq!(index.count_ones() + index.count_zeros(), data.len());
         assert_eq!(expected_count_ones, index.count_ones());
         assert_eq!(expected_count_zeros, index.count_zeros());
 
@@ -511,8 +500,9 @@ mod tests {
         assert_eq!(None, index.rank_zeros(n_bits));
 
         let mut gen_sorted_in = |range: Range<u64>| {
+            let Range { start, end } = range;
             let mut r: Vec<u64> = (0..1000)
-                .map(|_| rng.gen_range(range.start, range.end))
+                .map(|_| rng.rand_range(start..end))
                 .collect();
             r.sort_unstable();
             r

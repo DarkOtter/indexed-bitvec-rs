@@ -1,1007 +1,780 @@
 /*
-   Copyright 2018 DarkOtter
+ * A part of indexed-bitvec-rs, a library implementing bitvectors with fast rank operations.
+ *     Copyright (C) 2020  DarkOtter
+ *
+ *     This program is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     This program is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+//! Type to represent a reference to some bits, and basic count/rank/select functions for it.
+//!
+use crate::import::prelude::*;
+use crate::word::*;
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+// TODO: Consider extra tests
+// TODO: Consider implementing Ord
 
-       http://www.apache.org/licenses/LICENSE-2.0
+fn add_should_not_overflow(a: u64, b: u64) -> u64 {
+    debug_assert!(
+        a.checked_add(b).is_some(),
+        "Operation unexpectedly overflowed"
+    );
+    a.wrapping_add(b)
+}
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-//! Type to represent bits, and basic count/rank/select functions for it.
-use indexed_bitvec_core::bits_ref::BitsRef;
-use std::ops::Deref;
+fn sub_should_not_overflow(a: u64, b: u64) -> u64 {
+    debug_assert!(
+        a.checked_sub(b).is_some(),
+        "Operation unexpectedly overflowed"
+    );
+    a.wrapping_sub(b)
+}
 
-/// A bitvector stored as a sequence of bytes (most significant bit first).
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
-#[serde(remote = "Self")]
-pub struct Bits<T: Deref<Target = [u8]>>((T, u64));
+const EMPTY_WORDS: &'static [Word] = &[];
 
-impl<T: serde::Serialize + Deref<Target = [u8]>> serde::Serialize for Bits<T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        Bits::serialize(self, serializer)
+#[derive(Debug, Copy, Clone)]
+struct LeadingBitsOf<T> {
+    all_bits: T,
+    skip_trailing_bits: u8,
+    skipped_trailing_bits_count_ones: u8,
+}
+
+const_assert!(Word::len() <= u8::max_value() as u64);
+
+const fn leading_from_all<T>(all_bits: T) -> LeadingBitsOf<T> {
+    LeadingBitsOf {
+        all_bits,
+        skip_trailing_bits: 0,
+        skipped_trailing_bits_count_ones: 0,
     }
 }
 
-impl<'de, T: serde::Deserialize<'de> + Deref<Target = [u8]>> serde::Deserialize<'de> for Bits<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let (bytes, len) = Bits::deserialize(deserializer)?.decompose();
-        Bits::from_bytes(bytes, len).ok_or_else(|| serde::de::Error::custom("Invalid bits data"))
+impl<T> From<T> for LeadingBitsOf<T> {
+    fn from(all_bits: T) -> Self {
+        leading_from_all(all_bits)
     }
 }
 
-impl<'a, T: Deref<Target = [u8]>> From<&'a Bits<T>> for BitsRef<'a> {
-    fn from(bits: &'a Bits<T>) -> Self {
-        let len = (bits.0).1;
-        BitsRef::from_bytes((bits.0).0.deref(), len).expect("Bits with invalid len")
+fn bits_len<T: Bits + ?Sized>(bits: &T) -> u64 {
+    bits.len()
+}
+
+impl<'a> LeadingBitsOf<&'a [Word]> {
+    pub const fn empty() -> Self {
+        leading_from_all(EMPTY_WORDS)
     }
 }
 
-impl<'a> From<Bits<&'a [u8]>> for BitsRef<'a> {
-    fn from(bits: Bits<&'a [u8]>) -> Self {
-        let len = (bits.0).1;
-        BitsRef::from_bytes((bits.0).0, len).expect("Bits with invalid len")
-    }
+fn get_bit<T: Bits + ?Sized>(bits: &T, idx_bits: u64) -> Option<bool> {
+    bits.get(idx_bits)
 }
 
-impl<'a> From<BitsRef<'a>> for Bits<&'a [u8]> {
-    fn from(bits: BitsRef<'a>) -> Self {
-        Bits(bits.into())
-    }
-}
-
-impl<T: Deref<Target = [u8]>> Bits<T> {
-    pub fn from_bytes(bytes: T, len: u64) -> Option<Self> {
-        // Use BitsRef to check the size
-        match BitsRef::from_bytes(bytes.deref(), len) {
-            None => None,
-            Some(_) => Some(Bits((bytes, len))),
-        }
-    }
-
-    /// All of the bytes stored in the byte sequence: not just the ones actually used.
+impl<'a> Bits for LeadingBitsOf<&'a [Word]> {
     #[inline]
-    pub fn all_bytes(&self) -> &[u8] {
-        BitsRef::from(self).all_bytes()
+    fn len(&self) -> u64 {
+        sub_should_not_overflow(bits_len(self.all_bits), self.skip_trailing_bits as u64)
     }
 
-    /// The number of bits in the storage.
-    #[inline]
-    pub fn len(&self) -> u64 {
-        (self.0).1
-    }
-
-    /// The used bytes of the byte sequence: bear in mind some of the bits in the
-    /// last byte may be unused.
-    #[inline]
-    pub fn bytes(&self) -> &[u8] {
-        BitsRef::from(self).bytes()
-    }
-
-    /// Deconstruct the bits storage to get back what it was constructed from.
-    #[inline]
-    pub fn decompose(self) -> (T, u64) {
-        self.0
-    }
-
-    /// Get the byte at a specific index.
-    ///
-    /// Returns `None` for out-of-bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.get(0), Some(true));
-    /// assert_eq!(bits.get(7), Some(false));
-    /// assert_eq!(bits.get(14), Some(true));
-    /// assert_eq!(bits.get(15), None);
-    /// ```
-    #[inline]
-    pub fn get(&self, idx_bits: u64) -> Option<bool> {
-        BitsRef::from(self).get(idx_bits)
-    }
-
-    /// Count the set bits (*O(n)*).
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.count_ones(), 14);
-    /// assert_eq!(bits.count_zeros(), 1);
-    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.len());
-    /// ```
-    pub fn count_ones(&self) -> u64 {
-        BitsRef::from(self).count_ones()
-    }
-
-    /// Count the unset bits (*O(n)*).
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.count_ones(), 14);
-    /// assert_eq!(bits.count_zeros(), 1);
-    /// assert_eq!(bits.count_ones() + bits.count_zeros(), bits.len());
-    /// ```
-    #[inline]
-    pub fn count_zeros(&self) -> u64 {
-        BitsRef::from(self).count_zeros()
-    }
-
-    /// Count the set bits before a position in the bits (*O(n)*).
-    ///
-    /// Returns `None` it the index is out of bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert!((0..bits.len()).all(|idx|
-    ///     bits.rank_ones(idx).unwrap()
-    ///     + bits.rank_zeros(idx).unwrap()
-    ///     == (idx as u64)));
-    /// assert_eq!(bits.rank_ones(7), Some(7));
-    /// assert_eq!(bits.rank_zeros(7), Some(0));
-    /// assert_eq!(bits.rank_ones(8), Some(7));
-    /// assert_eq!(bits.rank_zeros(8), Some(1));
-    /// assert_eq!(bits.rank_ones(9), Some(8));
-    /// assert_eq!(bits.rank_zeros(9), Some(1));
-    /// assert_eq!(bits.rank_ones(15), None);
-    /// ```
-    pub fn rank_ones(&self, idx: u64) -> Option<u64> {
-        BitsRef::from(self).rank_ones(idx)
-    }
-
-    /// Count the unset bits before a position in the bits (*O(n)*).
-    ///
-    /// Returns `None` it the index is out of bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert!((0..bits.len()).all(|idx|
-    ///     bits.rank_ones(idx).unwrap()
-    ///     + bits.rank_zeros(idx).unwrap()
-    ///     == (idx as u64)));
-    /// assert_eq!(bits.rank_ones(7), Some(7));
-    /// assert_eq!(bits.rank_zeros(7), Some(0));
-    /// assert_eq!(bits.rank_ones(8), Some(7));
-    /// assert_eq!(bits.rank_zeros(8), Some(1));
-    /// assert_eq!(bits.rank_ones(9), Some(8));
-    /// assert_eq!(bits.rank_zeros(9), Some(1));
-    /// assert_eq!(bits.rank_ones(15), None);
-    /// ```
-    #[inline]
-    pub fn rank_zeros(&self, idx: u64) -> Option<u64> {
-        BitsRef::from(self).rank_zeros(idx)
-    }
-
-    /// Find the position of a set bit by its rank (*O(n)*).
-    ///
-    /// Returns `None` if no suitable bit is found. It is
-    /// always the case otherwise that `rank_ones(result) == Some(target_rank)`
-    /// and `get(result) == Some(true)`.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.select_ones(6), Some(6));
-    /// assert_eq!(bits.select_ones(7), Some(8));
-    /// assert_eq!(bits.select_zeros(0), Some(7));
-    /// assert_eq!(bits.select_zeros(1), None);
-    /// ```
-    pub fn select_ones(&self, target_rank: u64) -> Option<u64> {
-        BitsRef::from(self).select_ones(target_rank)
-    }
-
-    /// Find the position of an unset bit by its rank (*O(n)*).
-    ///
-    /// Returns `None` if no suitable bit is found. It is
-    /// always the case otherwise that `rank_zeros(result) == Some(target_rank)`
-    /// and `get(result) == Some(false)`.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.select_ones(6), Some(6));
-    /// assert_eq!(bits.select_ones(7), Some(8));
-    /// assert_eq!(bits.select_zeros(0), Some(7));
-    /// assert_eq!(bits.select_zeros(1), None);
-    /// ```
-    pub fn select_zeros(&self, target_rank: u64) -> Option<u64> {
-        BitsRef::from(self).select_zeros(target_rank)
-    }
-
-    /// Create a reference to these same bits.
-    pub fn clone_ref(&self) -> Bits<&[u8]> {
-        Bits::from_bytes(self.all_bytes(), self.len()).expect("Bits with invalid len")
-    }
-}
-
-impl<T: core::ops::DerefMut<Target = [u8]>> Bits<T> {
-    #[inline]
-    pub fn all_bytes_mut(&mut self) -> &mut [u8] {
-        (self.0).0.deref_mut()
-    }
-
-    /// Set the byte at a specific index.
-    ///
-    /// Returns an error if the index is out of bounds.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let mut bits = Bits::from_bytes(vec![0xFE, 0xFE], 15).unwrap();
-    /// assert_eq!(bits.get(0), Some(true));
-    /// assert_eq!(bits.get(7), Some(false));
-    /// assert_eq!(bits.get(14), Some(true));
-    /// assert_eq!(bits.get(15), None);
-    /// assert!(bits.set(0, false).is_ok());
-    /// assert_eq!(bits.get(0), Some(false));
-    /// assert!(bits.set(0, true).is_ok());
-    /// assert_eq!(bits.get(0), Some(true));
-    /// assert!(bits.set(7, false).is_ok());
-    /// assert_eq!(bits.get(7), Some(false));
-    /// assert!(bits.set(14, false).is_ok());
-    /// assert_eq!(bits.get(14), Some(false));
-    /// assert!(bits.set(15, false).is_err());
-    /// ```
-    pub fn set(&mut self, idx_bits: u64, to: bool) -> Result<(), &'static str> {
-        let len = self.len();
-        if idx_bits >= len {
-            Err("Index out-of-bounds")
-        } else {
-            let data = self.all_bytes_mut();
-            let byte_idx = (idx_bits / 8) as usize;
-            let idx_in_byte = (idx_bits % 8) as u8;
-
-            let mask = 0x80u8 >> idx_in_byte;
-
-            if to {
-                data[byte_idx] |= mask
-            } else {
-                data[byte_idx] &= !mask
-            }
-
-            Ok(())
-        }
-    }
-}
-
-impl Bits<Vec<u8>> {
-    /// Add a specific bit to the end of the vector.
-    ///
-    /// This will enlarge the used section of bits (corresponding
-    /// to `Bits::len`) and overwrite any content already in the
-    /// newly used storage.
-    ///
-    /// ```
-    /// use indexed_bitvec::Bits;
-    /// let mut bits = Bits::from_bytes(vec![0x80], 0).unwrap();
-    /// assert_eq!(0x80, bits.all_bytes()[0]);
-    /// assert_eq!(None, bits.get(0));
-    /// bits.push(false);
-    /// assert_eq!(0x00, bits.all_bytes()[0]);
-    /// assert_eq!(Some(false), bits.get(0));
-    /// bits.push(true);
-    /// assert_eq!(0x40, bits.all_bytes()[0]);
-    /// assert_eq!(Some(true), bits.get(1));
-    /// for _ in 0..6 { bits.push(false) };
-    /// assert_eq!(0x40, bits.all_bytes()[0]);
-    /// assert_eq!(1, bits.all_bytes().len());
-    /// bits.push(true);
-    /// assert_eq!(2, bits.all_bytes().len());
-    /// assert_eq!(0x80, bits.all_bytes()[1]);
-    /// assert_eq!(Some(true), bits.get(8));
-    /// ```
-    pub fn push(&mut self, bit: bool) {
-        let original_len = (self.0).1;
-        (self.0).1 += 1;
-
-        debug_assert!(original_len / 8 <= (self.0).0.len() as u64);
-        if original_len % 8 == 0 && original_len / 8 == (self.0).0.len() as u64 {
-            (self.0).0.push(if bit { 0x80 } else { 0x00 })
-        } else {
-            self.set(original_len, bit).expect("Should not be in range");
-        }
-    }
-}
-
-fn must_have_or_bug<T>(opt: Option<T>) -> T {
-    opt.expect("If this is None there is a bug in Bits implementation")
-}
-
-use std::cmp::Ordering;
-
-impl<T: Deref<Target = [u8]>> std::cmp::Ord for Bits<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        BitsRef::from(self).cmp(&BitsRef::from(other))
-    }
-}
-
-impl<T: Deref<Target = [u8]>> std::cmp::PartialOrd for Bits<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T: Deref<Target = [u8]>> std::cmp::Eq for Bits<T> {}
-
-impl<T: Deref<Target = [u8]>> std::cmp::PartialEq for Bits<T> {
-    fn eq(&self, other: &Self) -> bool {
-        BitsRef::from(self).eq(&BitsRef::from(other))
-    }
-}
-
-#[cfg(feature = "implement_heapsize")]
-impl<T: Deref<Target = [u8]> + heapsize::HeapSizeOf> heapsize::HeapSizeOf for Bits<T> {
-    fn heap_size_of_children(&self) -> usize {
-        (self.0).0.heap_size_of_children()
-    }
-}
-
-/// An iterator through individual bits of a bitvector.
-#[derive(Copy, Clone, Debug)]
-pub struct BitIterator<T: Deref<Target = [u8]>> {
-    search_from: u64,
-    search_in: Bits<T>,
-}
-
-impl<T: Deref<Target = [u8]>> Iterator for BitIterator<T> {
-    type Item = bool;
-
-    fn next(&mut self) -> Option<bool> {
-        match self.search_in.get(self.search_from) {
-            None => None,
-            ret => {
-                self.search_from += 1;
-                ret
-            }
-        }
-    }
-}
-
-impl<T: Deref<Target = [u8]>> BitIterator<T> {
-    fn next_index<F>(&mut self, with_remaining: F) -> Option<u64>
-    where
-        F: Fn(Bits<&[u8]>, u64) -> Option<u64>,
-    {
-        if self.search_from >= self.search_in.len() {
+    fn get(&self, idx_bits: u64) -> Option<bool> {
+        if idx_bits >= bits_len(self) {
             return None;
         }
+        let r = get_bit(self.all_bits, idx_bits);
+        debug_assert!(r.is_some(), "Should not be out of bounds");
+        r
+    }
 
-        let byte_index = (self.search_from / 8) as usize;
-        let byte_offset = self.search_from % 8;
+    fn count_ones(&self) -> u64 {
+        sub_should_not_overflow(
+            self.all_bits.count_ones(),
+            self.skipped_trailing_bits_count_ones as u64,
+        )
+    }
 
-        let byte_index_bits = (byte_index as u64) * 8;
+    fn rank_ones(&self, idx_bits: u64) -> Option<u64> {
+        if idx_bits >= self.len() {
+            return None;
+        }
+        let r = self.all_bits.rank_ones(idx_bits);
+        debug_assert!(r.is_some(), "Should not be out of bounds");
+        r
+    }
 
-        let remaining_part = must_have_or_bug(Bits::from_bytes(
-            &(self.search_in.all_bytes())[byte_index..],
-            self.search_in.len() - byte_index_bits,
-        ));
+    fn select_ones(&self, target_rank: u64) -> Option<u64> {
+        self.all_bits.select_ones(target_rank)
+            .filter(|&idx| idx < self.len())
+    }
 
-        let next_rank = with_remaining(remaining_part, byte_offset);
+    fn select_zeros(&self, target_rank: u64) -> Option<u64> {
+        self.all_bits.select_zeros(target_rank)
+            .filter(|&idx| idx < self.len())
+    }
+}
 
-        match next_rank {
-            None => {
-                self.search_from = self.search_in.len();
-                None
+impl<'a> BitsMut for LeadingBitsOf<&'a mut [Word]> {
+    fn replace(&mut self, idx: u64, with: bool) -> Option<bool> {
+        if idx >= self.borrow().len() {
+            return None;
+        }
+        let r = self.all_bits.replace(idx, with);
+        debug_assert!(r.is_some(), "Should not be out of bounds");
+        r
+    }
+
+    fn set(&mut self, idx: u64, to: bool) {
+        if idx >= self.borrow().len() {
+            panic!("Index is out of bounds for bits");
+        }
+        self.all_bits.set(idx, to);
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl BitsVec for LeadingBitsOf<Vec<Word>> {
+    fn push(&mut self, bit: bool) {
+        if self.skip_trailing_bits == 0 {
+            assert_eq!(self.skipped_trailing_bits_count_ones, 0);
+            self.all_bits.push(if bit { Word::msb() } else { Word::zeros() });
+            self.skip_trailing_bits = Word::len() as u8 - 1;
+        } else {
+            let current_len = self.borrow().len();
+            let prev_bit = self.all_bits.replace(current_len, bit).expect("This index should not be out of bounds");
+            self.skip_trailing_bits -= 1;
+            self.skipped_trailing_bits_count_ones -= prev_bit as u8;
+        }
+    }
+}
+
+/// Bits stored as a sequence of bytes (most significant bit first).
+#[derive(Debug, Copy, Clone)]
+pub struct BitsOf<T> {
+    leading_bits: LeadingBitsOf<T>,
+    skip_leading_bits: u8,
+    skipped_leading_bits_count_ones: u8,
+}
+
+pub type BitsRef<'a> = BitsOf<&'a [Word]>;
+pub type BitsRefMut<'a> = BitsOf<&'a mut [Word]>;
+
+const fn bits_from_leading<T>(leading_bits: LeadingBitsOf<T>) -> BitsOf<T> {
+    BitsOf {
+        leading_bits,
+        skip_leading_bits: 0,
+        skipped_leading_bits_count_ones: 0,
+    }
+}
+
+impl<T> From<LeadingBitsOf<T>> for BitsOf<T> {
+    fn from(leading_bits: LeadingBitsOf<T>) -> Self {
+        bits_from_leading(leading_bits)
+    }
+}
+
+impl<T> From<T> for BitsOf<T> {
+    fn from(all_bits: T) -> Self {
+        Self::from(<LeadingBitsOf<T>>::from(all_bits))
+    }
+}
+
+impl<'a> BitsRef<'a> {
+    pub const fn empty() -> Self {
+        bits_from_leading(LeadingBitsOf::empty())
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    unsafe fn into_leading_bits_unchecked(self) -> LeadingBitsOf<&'a [Word]> {
+        self.leading_bits
+    }
+
+    fn into_leading_bits(self) -> Option<LeadingBitsOf<&'a [Word]>> {
+        if self.skip_leading_bits == 0 {
+            Some(unsafe { self.into_leading_bits_unchecked() })
+        } else {
+            None
+        }
+    }
+
+    pub fn chunks(self, bits_in_chunk: u64) -> Option<ChunksIter<'a>> {
+        ChunksIter::new(self, bits_in_chunk)
+    }
+}
+
+impl<'a> Bits for BitsRef<'a> {
+    #[inline]
+    fn len(&self) -> u64 {
+        sub_should_not_overflow(self.leading_bits.len(), self.skip_leading_bits as u64)
+    }
+
+    fn get(&self, idx: u64) -> Option<bool> {
+        // If this overflows then it must be out of range
+        let actual_idx = idx.checked_add(self.skip_leading_bits as u64)?;
+        self.leading_bits.get(actual_idx)
+    }
+
+    fn count_ones(&self) -> u64 {
+        sub_should_not_overflow(
+            self.leading_bits.count_ones(),
+            self.skipped_leading_bits_count_ones as u64,
+        )
+    }
+
+    fn rank_ones(&self, idx: u64) -> Option<u64> {
+        // If this overflows then it must be out of range
+        let actual_idx = idx.checked_add(self.skip_leading_bits as u64)?;
+        self.leading_bits
+            .rank_ones(actual_idx)
+            .map(|base_rank_ones| {
+                sub_should_not_overflow(base_rank_ones, self.skipped_leading_bits_count_ones as u64)
+            })
+    }
+
+    fn select_ones(&self, target_rank: u64) -> Option<u64> {
+        let skip_leading_bits = self.skip_leading_bits as u64;
+        // If this overflows then we must be out of range
+        let actual_target_rank = target_rank.checked_add(
+            self.skipped_leading_bits_count_ones as u64
+        )?;
+        self.leading_bits
+            .select_ones(actual_target_rank)
+            .map(|base_select| sub_should_not_overflow(base_select, skip_leading_bits))
+    }
+
+    fn select_zeros(&self, target_rank: u64) -> Option<u64> {
+        let skip_leading_bits = self.skip_leading_bits as u64;
+        // If this overflows then we must be out of range
+        let actual_target_rank = target_rank.checked_add(
+            sub_should_not_overflow(skip_leading_bits,
+            self.skipped_leading_bits_count_ones as u64
+        ))?;
+        self.leading_bits
+            .select_zeros(actual_target_rank)
+            .map(|base_select| sub_should_not_overflow(base_select, skip_leading_bits))
+    }
+}
+
+impl<'a> BitsMut for BitsRefMut<'a> {
+    fn replace(&mut self, idx: u64, with: bool) -> Option<bool> {
+        // If this overflows then it must be out of range
+        let actual_idx = idx.checked_add(self.skip_leading_bits as u64)?;
+        self.leading_bits.replace(actual_idx, with)
+    }
+
+    fn set(&mut self, idx: u64, to: bool) {
+        // If this overflows then it must be out of range
+        let actual_idx = match idx.checked_add(self.skip_leading_bits as u64) {
+            Some(idx) => idx,
+            None => panic!("Index is out of bounds for bits"),
+        };
+        self.leading_bits.set(actual_idx, to);
+    }
+}
+
+impl<'a> BitsSplit for BitsRef<'a> {
+    fn split_at(self, idx_bits: u64) -> Option<(Self, Self)> {
+        fn split_leading_bits(leading_bits: LeadingBitsOf<&[Word]>, idx_bits: u64) -> Option<(LeadingBitsOf<&[Word]>, BitsRef)> {
+            if idx_bits >= bits_len(&leading_bits) {
+                return None
             }
-            Some(next_sub_idx) => {
-                debug_assert!(next_sub_idx >= byte_offset);
-                let res = byte_index_bits + next_sub_idx;
-                self.search_from = res + 1;
-                Some(res)
+            let all_bits = leading_bits.all_bits;
+            let (whole_words, bits) = crate::word::split_idx(idx_bits);
+            if bits == 0 {
+                let (first_part, second_part) = all_bits.split_at(whole_words);
+                let second_part = LeadingBitsOf { all_bits: second_part, ..leading_bits };
+                Some((first_part.into(), second_part.into()))
+            } else {
+                let first_part: &[Word] = all_bits.get(..whole_words+1).expect("This should not be out of bounds");
+                let second_part : &[Word] = all_bits.get(whole_words..).expect("This should not be out of bounds");
+                let overlap_word : Word = *all_bits.get(whole_words).expect("This should not be out of bounds");
+                let overlap_full_count = overlap_word.count_ones();
+                let overlap_first_part_count = overlap_word.rank_ones(bits).expect("This should not be out of bounds");
+                let overlap_second_part_count = sub_should_not_overflow(overlap_full_count, overlap_first_part_count);
+                let first_part = LeadingBitsOf { all_bits: first_part, skip_trailing_bits: (Word::len() - bits) as u8, skipped_trailing_bits_count_ones: overlap_second_part_count as u8 };
+                let second_part_leading = LeadingBitsOf { all_bits: second_part, ..leading_bits };
+                let second_part = BitsOf { leading_bits: second_part_leading, skip_leading_bits: bits as u8, skipped_leading_bits_count_ones: overlap_first_part_count as u8 };
+                Some((first_part, second_part))
+            }
+        }
+
+        // If this overflows then it must be out of range
+        let actual_idx = idx_bits.checked_add(self.skip_leading_bits as u64)?;
+        let BitsOf { leading_bits, skip_leading_bits, skipped_leading_bits_count_ones } = self;
+        split_leading_bits(leading_bits, actual_idx)
+            .map(|(leading_part, trailing_part)| {
+                let leading_part = BitsOf {
+                    leading_bits: leading_part,
+                    skip_leading_bits,
+                    skipped_leading_bits_count_ones,
+                };
+                (leading_part, trailing_part)
+            })
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl BitsVec for BitsOf<Vec<Word>> {
+    fn push(&mut self, bit: bool) {
+        self.leading_bits.push(bit)
+    }
+}
+
+fn generalised_eq(left: BitsOf<&[Word]>, right: BitsOf<&[Word]>) -> bool {
+    fn eq_in_range(
+        left: &[Word],
+        right: &[Word],
+        left_offset: u64,
+        right_offset: u64,
+        length: u64,
+    ) -> bool {
+        let left_end_in_range =
+            bits_len(left).checked_sub(left_offset).map_or(false, |available_length| available_length >= length);
+        let right_end_in_range =
+            bits_len(right).checked_sub(right_offset).map_or(false, |available_length| available_length >= length);
+
+        if !(left_end_in_range & right_end_in_range) {
+            panic!("Indexes out of bounds")
+        }
+
+        (0..length).into_iter().all(|idx| {
+            let left_idx_bits = add_should_not_overflow(idx, left_offset);
+            let right_idx_bits = add_should_not_overflow(idx, right_offset);
+            let in_left = unsafe { crate::word::words_get_unchecked(left, left_idx_bits) };
+            let in_right = unsafe { crate::word::words_get_unchecked(right, right_idx_bits) };
+            in_left == in_right
+        })
+    }
+
+    let left_len = left.len();
+    if left_len != right.len() {
+        return false;
+    }
+        eq_in_range(
+            left.leading_bits.all_bits,
+            right.leading_bits.all_bits,
+            left.skip_leading_bits as u64,
+            right.skip_leading_bits as u64,
+            left_len,
+        )
+}
+
+fn copy<T: Copy>(x: &T) -> T {
+    *x
+}
+
+impl<'a> PartialEq for LeadingBitsOf<&'a [Word]> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.skip_trailing_bits == 0 {
+            other.skip_trailing_bits == 0 && self.all_bits == other.all_bits
+        } else {
+            other.skip_trailing_bits == self.skip_trailing_bits &&
+                self.all_bits.len() == other.all_bits.len() && {
+                let (self_partial, self_whole) =
+                    self.all_bits.split_last().expect("Should have at least 1 word");
+                let (other_partial, other_whole) =
+                    other.all_bits.split_last().expect("Should have at least 1 word");
+                self_whole == other_whole && {
+                    let partial_bits = Word::len() - self.skip_trailing_bits as u64;
+                    self_partial.zero_after_first_bits(partial_bits).eq(&other_partial.zero_after_first_bits(partial_bits))
+                }
             }
         }
     }
 }
 
-/// An iterator through the one (set) bit indexes of a bitvector.
-#[derive(Copy, Clone, Debug)]
-pub struct OneBitIndexIterator<T: Deref<Target = [u8]>>(BitIterator<T>);
+impl<'a> Eq for LeadingBitsOf<&'a [Word]> {
 
-impl<T: Deref<Target = [u8]>> Iterator for OneBitIndexIterator<T> {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<u64> {
-        self.0.next_index(|remaining_part, byte_offset| {
-            debug_assert!(byte_offset < 8);
-            let target_rank = must_have_or_bug(remaining_part.rank_ones(byte_offset));
-            remaining_part.select_ones(target_rank)
-        })
-    }
 }
 
-/// An iterator through the zero (unset) bit indexes of a bitvector.
-#[derive(Copy, Clone, Debug)]
-pub struct ZeroBitIndexIterator<T: Deref<Target = [u8]>>(BitIterator<T>);
-
-impl<T: Deref<Target = [u8]>> Iterator for ZeroBitIndexIterator<T> {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<u64> {
-        self.0.next_index(|remaining_part, byte_offset| {
-            debug_assert!(byte_offset < 8);
-            let target_rank = must_have_or_bug(remaining_part.rank_zeros(byte_offset));
-            remaining_part.select_zeros(target_rank)
-        })
-    }
-}
-
-impl<T: Deref<Target = [u8]>> IntoIterator for Bits<T> {
-    type Item = bool;
-    type IntoIter = BitIterator<T>;
-
-    fn into_iter(self) -> BitIterator<T> {
-        BitIterator {
-            search_from: 0,
-            search_in: self,
+impl<'a> PartialEq for BitsRef<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.skip_leading_bits == other.skip_leading_bits {
+            match self.into_leading_bits() {
+                Some(simple_self) => {
+                    let simple_other = other
+                        .into_leading_bits()
+                        .expect("Other one should be leading bits only too");
+                    simple_self == simple_other
+                }
+                None => {
+                    // TODO: This case should be more optimised
+                    generalised_eq(copy(self), copy(other))
+                }
+            }
+        } else {
+            generalised_eq(copy(self), copy(other))
         }
     }
 }
 
-impl<T: Deref<Target = [u8]>> Bits<T> {
-    pub fn iter(&self) -> BitIterator<&[u8]> {
-        self.clone_ref().into_iter()
+impl<'a> Eq for BitsRef<'a> {}
+
+impl<'a> PartialEq for BitsRefMut<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.borrow().eq(&other.borrow())
     }
 
-    pub fn into_iter_one_bits(self) -> OneBitIndexIterator<T> {
-        OneBitIndexIterator(self.into_iter())
+    fn ne(&self, other: &Self) -> bool {
+        self.borrow().ne(&other.borrow())
+    }
+}
+
+impl<'a> Eq for BitsRefMut<'a> {
+
+}
+
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl PartialEq for BitsOf<Vec<Word>> {
+    fn eq(&self, other: &Self) -> bool {
+        self.borrow().eq(&other.borrow())
     }
 
-    pub fn iter_one_bits(&self) -> OneBitIndexIterator<&[u8]> {
-        self.clone_ref().into_iter_one_bits()
+    fn ne(&self, other: &Self) -> bool {
+        self.borrow().eq(&other.borrow())
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl Eq for BitsOf<Vec<Word>> {}
+
+impl<T: crate::import::Borrow<[Word]>> LeadingBitsOf<T> {
+    fn borrow(&self) -> LeadingBitsOf<&[Word]> {
+        let LeadingBitsOf { all_bits, skip_trailing_bits, skipped_trailing_bits_count_ones } = self;
+        LeadingBitsOf { all_bits: all_bits.borrow(), skip_trailing_bits: *skip_trailing_bits, skipped_trailing_bits_count_ones: *skipped_trailing_bits_count_ones }
+    }
+}
+
+impl<T: crate::import::Borrow<[Word]>> BitsOf<T> {
+    pub fn borrow(&self) -> BitsRef {
+        let BitsOf { leading_bits, skip_leading_bits, skipped_leading_bits_count_ones } = self;
+        BitsOf { leading_bits: leading_bits.borrow(), skip_leading_bits: *skip_leading_bits, skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones }
+    }
+}
+
+impl<T: crate::import::BorrowMut<[Word]>> LeadingBitsOf<T> {
+    fn borrow_mut(&mut self) -> LeadingBitsOf<&mut [Word]> {
+        let LeadingBitsOf { all_bits, skip_trailing_bits, skipped_trailing_bits_count_ones } = self;
+        LeadingBitsOf { all_bits: all_bits.borrow_mut(), skip_trailing_bits: *skip_trailing_bits, skipped_trailing_bits_count_ones: *skipped_trailing_bits_count_ones }
+    }
+}
+
+impl<T: crate::import::BorrowMut<[Word]>> BitsOf<T> {
+    pub fn borrow_mut(&mut self) -> BitsRefMut {
+        let BitsOf { leading_bits, skip_leading_bits, skipped_leading_bits_count_ones } = self;
+        BitsOf { leading_bits: leading_bits.borrow_mut(), skip_leading_bits: *skip_leading_bits, skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunksIter<'a> {
+    data: BitsRef<'a>,
+    bits_in_chunk: u64,
+}
+
+impl<'a> ChunksIter<'a> {
+    fn new(data: BitsRef<'a>, bits_in_chunk: u64) -> Option<Self> {
+        if bits_in_chunk < 1 {
+            None
+        } else {
+            Some(Self {
+                data,
+                bits_in_chunk,
+            })
+        }
+    }
+}
+
+impl<'a> Iterator for ChunksIter<'a> {
+    type Item = BitsRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.data.split_at(self.bits_in_chunk) {
+                None => {
+                    if self.data.is_empty() {
+                        None
+                    } else {
+                        Some(replace(&mut self.data, BitsOf::empty()))
+                    }
+                },
+                Some(split) => {
+                    self.data = split.1;
+                    Some(split.0)
+                },
+            }
+        }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
     }
 
-    pub fn into_iter_zero_bits(self) -> ZeroBitIndexIterator<T> {
-        ZeroBitIndexIterator(self.into_iter())
+    fn count(self) -> usize {
+        self.len()
+    }
+}
+
+impl<'a> crate::import::iter::ExactSizeIterator for ChunksIter<'a> {
+    fn len(&self) -> usize {
+        ceil_div_u64(self.data.len(), self.bits_in_chunk) as usize
+    }
+}
+
+impl<'a> Bits for BitsRefMut<'a> {
+    fn len(&self) -> u64 {
+        self.borrow().len()
     }
 
-    pub fn iter_zero_bits(&self) -> ZeroBitIndexIterator<&[u8]> {
-        self.clone_ref().into_iter_zero_bits()
+    fn get(&self, idx: u64) -> Option<bool> {
+        self.borrow().get(idx)
+    }
+
+    fn count_ones(&self) -> u64 {
+        self.borrow().count_ones()
+    }
+
+    fn count_zeros(&self) -> u64 {
+        self.borrow().count_zeros()
+    }
+
+    fn rank_ones(&self, idx: u64) -> Option<u64> {
+        self.borrow().rank_ones(idx)
+    }
+
+    fn rank_zeros(&self, idx: u64) -> Option<u64> {
+        self.borrow().rank_zeros(idx)
+    }
+
+    fn select_ones(&self, target_rank: u64) -> Option<u64> {
+        self.borrow().select_ones(target_rank)
+    }
+
+    fn select_zeros(&self, target_rank: u64) -> Option<u64> {
+        self.borrow().select_zeros(target_rank)
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl Bits for BitsOf<Vec<Word>> {
+    fn len(&self) -> u64 {
+        self.borrow().len()
+    }
+
+    fn get(&self, idx: u64) -> Option<bool> {
+        self.borrow().get(idx)
+    }
+
+    fn count_ones(&self) -> u64 {
+        self.borrow().count_ones()
+    }
+
+    fn count_zeros(&self) -> u64 {
+        self.borrow().count_zeros()
+    }
+
+    fn rank_ones(&self, idx: u64) -> Option<u64> {
+        self.borrow().rank_ones(idx)
+    }
+
+    fn rank_zeros(&self, idx: u64) -> Option<u64> {
+        self.borrow().rank_zeros(idx)
+    }
+
+    fn select_ones(&self, target_rank: u64) -> Option<u64> {
+        self.borrow().select_ones(target_rank)
+    }
+
+    fn select_zeros(&self, target_rank: u64) -> Option<u64> {
+        self.borrow().select_zeros(target_rank)
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl BitsMut for BitsOf<Vec<Word>> {
+    fn replace(&mut self, idx: u64, with: bool) -> Option<bool> {
+        self.borrow_mut().replace(idx, with)
+    }
+
+    fn set(&mut self, idx: u64, to: bool) {
+        self.borrow_mut().set(idx, to)
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
-    use proptest::collection::vec as gen_vec;
+    use crate::bits_traits::tests as bits_tests;
+    use crate::word::tests::words;
     use proptest::collection::SizeRange;
     use proptest::prelude::*;
 
-    type Bitvec = Bits<Vec<u8>>;
-
-    prop_compose! {
-        fn gen_bits_inner(byte_len: SizeRange)
-            (data in gen_vec(any::<u8>(), byte_len))
-            (len in 0..=((data.len() as u64) * 8),
-             data in Just(data))
-            -> Bitvec
-        {
-            Bits::from_bytes(data, len).unwrap()
-        }
+    fn get_bit<T: Bits + ?Sized>(t: &T, idx: u64) -> Option<bool> {
+        t.get(idx)
     }
 
-    pub fn gen_bits(byte_len: impl Into<SizeRange>) -> impl Strategy<Value = Bitvec> {
-        gen_bits_inner(byte_len.into())
-    }
-
-    #[test]
-    fn test_basic_from() {
-        let example_data = vec![0xff, 0xf0];
-        for i in 0..=16 {
-            assert!(Bits::from_bytes(example_data.clone(), i).is_some());
-        }
-        for i in 17..32 {
-            assert!(Bits::from_bytes(example_data.clone(), i).is_none());
-        }
-    }
-
-    fn from_bytes_or_panic<T: Deref<Target = [u8]>>(bytes: T, len: u64) -> Bits<T> {
-        Bits::from_bytes(bytes, len).expect("invalid bytes in test")
-    }
-
-    proptest! {
-        #[test]
-        fn test_all_bytes(bits in gen_bits(0..=1024)) {
-            let clone_of_data = bits.clone().decompose().0;
-            prop_assert_eq!(&clone_of_data[..], bits.all_bytes());
-        }
-
-        #[test]
-        fn test_bytes(bits in gen_bits(0..=1024)) {
-            let need_bytes = ((bits.len() + 7) / 8) as usize;
-            prop_assert_eq!(&bits.all_bytes()[..need_bytes], bits.bytes());
-        }
-    }
-
-    #[test]
-    fn test_basic_get() {
-        let example_data = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
-        let max_len = 8 * 8;
-        for len in 0..=max_len {
-            let bits = from_bytes_or_panic(example_data.clone(), len);
-            for i in 0..len {
-                assert_eq!(Some(i / 8 == i % 8), bits.get(i));
-            }
-            for i in len..=(max_len + 1) {
-                assert_eq!(None, bits.get(i));
-            }
-        }
-
-        let example_data = vec![0xff, 0xc0];
-        let bits = from_bytes_or_panic(example_data.clone(), 10);
-        for i in 0..10 {
-            assert_eq!(bits.get(i), Some(true), "Differed at position {}", i)
-        }
-        for i in 10..16 {
-            assert_eq!(bits.get(i), None, "Differed at position {}", i)
-        }
-    }
-
-    #[test]
-    fn test_count_examples() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| from_bytes_or_panic(bytes_a, len);
-        assert_eq!(12, make(16).count_ones());
-        assert_eq!(4, make(16).count_zeros());
-        assert_eq!(12, make(15).count_ones());
-        assert_eq!(3, make(15).count_zeros());
-        assert_eq!(11, make(14).count_ones());
-        assert_eq!(3, make(14).count_zeros());
-        assert_eq!(11, make(13).count_ones());
-        assert_eq!(2, make(13).count_zeros());
-        assert_eq!(10, make(12).count_ones());
-        assert_eq!(2, make(12).count_zeros());
-        assert_eq!(10, make(11).count_ones());
-        assert_eq!(1, make(11).count_zeros());
-        assert_eq!(9, make(10).count_ones());
-        assert_eq!(1, make(10).count_zeros());
-        assert_eq!(9, make(9).count_ones());
-        assert_eq!(0, make(9).count_zeros());
-        assert_eq!(8, make(8).count_ones());
-        assert_eq!(0, make(8).count_zeros());
-        assert_eq!(7, make(7).count_ones());
-        assert_eq!(0, make(7).count_zeros());
-        assert_eq!(0, make(0).count_ones());
-        assert_eq!(0, make(0).count_zeros());
-    }
-
-    fn test_count_via_get(bits: Bitvec, bit_to_count: bool) -> Result<(), TestCaseError> {
-        fn inner<F>(bits: Bitvec, bit_to_count: bool, f: F) -> Result<(), TestCaseError>
-        where
-            F: Fn(&Bitvec) -> u64,
-        {
-            let count_via_get = (0..bits.len())
-                .filter(|&idx| bits.get(idx).unwrap() == bit_to_count)
-                .count() as u64;
-            prop_assert_eq!(count_via_get, f(&bits));
-            Ok(())
-        }
-
-        if bit_to_count {
-            inner(bits, true, Bits::count_ones)
-        } else {
-            inner(bits, false, Bits::count_zeros)
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn test_count_ones_via_get(bits in gen_bits(0..=1024)) {
-            test_count_via_get(bits, true)?;
-        }
-
-        #[test]
-        fn test_count_ones_via_iter(bits in gen_bits(0..=1024)) {
-            let count_via_iter =
-                bits.iter()
-                .filter(|&b| b)
-                .count() as u64;
-            prop_assert_eq!(count_via_iter, bits.count_ones());
-
-        }
-
-        #[test]
-        fn test_count_zeros_via_get(bits in gen_bits(0..=1024)) {
-            test_count_via_get(bits, false)?;
-        }
-
-        #[test]
-        fn test_count_zeros_via_count_ones(bits in gen_bits(0..=1024)) {
-            prop_assert_eq!(bits.len() - bits.count_ones(), bits.count_zeros());
-        }
-
-    }
-
-    #[test]
-    fn test_rank_examples() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| from_bytes_or_panic(bytes_a, len);
-        let bits_a = make(16);
-        for i in 0..15 {
-            assert_eq!(Some(make(i).count_ones()), bits_a.rank_ones(i));
-            assert_eq!(Some(make(i).count_zeros()), bits_a.rank_zeros(i));
-        }
-        assert_eq!(None, bits_a.rank_ones(16));
-        assert_eq!(None, bits_a.rank_zeros(16));
-        assert_eq!(None, make(13).rank_ones(13));
-        assert_eq!(None, make(13).rank_zeros(13));
-        assert_eq!(bits_a.rank_ones(12), make(13).rank_ones(12));
-        assert_eq!(bits_a.rank_zeros(12), make(13).rank_zeros(12));
-    }
-
-    fn test_rank_via_get(bits: Bitvec, bit_to_rank: bool) -> Result<(), TestCaseError> {
-        fn inner<F>(bits: Bitvec, bit_to_rank: bool, f: F) -> Result<(), TestCaseError>
-        where
-            F: Fn(&Bitvec, u64) -> Option<u64>,
-        {
-            let mut running_rank = 0;
-            for idx in 0..=(bits.len() + 64) {
-                if idx >= bits.len() {
-                    prop_assert_eq!(None, f(&bits, idx), "should be out of range at {}", idx);
+    pub fn bits(n_words: impl Into<SizeRange>) -> impl Strategy<Value = BitsOf<Vec<Word>>> {
+        words(n_words).prop_flat_map(|all_bits| {
+            let ranges = {
+                let word_len = Word::len() as u8;
+                let range =
+                if all_bits.len() == 1 {
+                    0..=word_len
                 } else {
-                    prop_assert_eq!(
-                        Some(running_rank),
-                        f(&bits, idx),
-                        "disagree at index {}",
-                        idx
-                    );
-                    if bits.get(idx).unwrap() == bit_to_rank {
-                        running_rank += 1;
-                    }
-                }
-            }
-            Ok(())
-        }
-
-        if bit_to_rank {
-            inner(bits, true, Bits::rank_ones)
-        } else {
-            inner(bits, false, Bits::rank_zeros)
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn test_rank_ones_via_get(bits in gen_bits(0..=1024)) {
-            test_rank_via_get(bits, true)?;
-        }
-
-        #[test]
-        fn test_rank_ones_via_iter(bits in gen_bits(0..=1024)) {
-            let mut idx = 0u64;
-            let mut running_rank_ones = 0;
-            for b in bits.iter() {
-                prop_assert_eq!(Some(running_rank_ones), bits.rank_ones(idx),
-                                "disagree at index {}", idx);
-                idx += 1;
-                if b { running_rank_ones += 1 };
-            }
-            prop_assert_eq!(None, bits.rank_ones(idx),
-                            "should be out of range at {}", idx);
-        }
-
-        #[test]
-        fn test_rank_zeros_via_get(bits in gen_bits(0..=1024)) {
-            test_rank_via_get(bits, false)?;
-        }
-
-        #[test]
-        fn test_rank_zeros_via_rank_ones(bits in gen_bits(0..=1024)) {
-            for idx in 0..=(bits.len() + 64) {
-                let via_rank_ones =
-                    bits.rank_ones(idx).map(|ones| idx - ones);
-                prop_assert_eq!(via_rank_ones, bits.rank_zeros(idx));
-            }
-        }
-    }
-
-    #[test]
-    fn test_select_examples() {
-        let pattern_a = [0xff, 0xaau8];
-        let bytes_a = &pattern_a[..];
-        let make = |len: u64| from_bytes_or_panic(bytes_a, len);
-        assert_eq!(Some(14), make(16).select_ones(11));
-        assert_eq!(None, make(14).select_ones(11));
-    }
-
-    fn test_select_via_count_rank_get(
-        bits: Bitvec,
-        bit_to_select: bool,
-    ) -> Result<(), TestCaseError> {
-        fn inner<C, R, S>(
-            bits: Bitvec,
-            bit_to_select: bool,
-            count: C,
-            rank: R,
-            select: S,
-        ) -> Result<(), TestCaseError>
-        where
-            C: Fn(&Bitvec) -> u64,
-            R: Fn(&Bitvec, u64) -> Option<u64>,
-            S: Fn(&Bitvec, u64) -> Option<u64>,
-        {
-            for bit_idx in 0..count(&bits) {
-                let select_idx = select(&bits, bit_idx);
-                prop_assert!(
-                    select_idx.is_some(),
-                    "expected bit_idx to exist: {}",
-                    bit_idx
-                );
-                let select_idx = select_idx.unwrap();
-                prop_assert_eq!(
-                    Some(bit_idx),
-                    rank(&bits, select_idx),
-                    "expected rank to be {} at {}",
-                    bit_idx,
-                    select_idx
-                );
-                prop_assert_eq!(
-                    Some(bit_to_select),
-                    bits.get(select_idx),
-                    "expected bit to be {} at {}",
-                    bit_to_select,
-                    select_idx
-                );
-            }
-
-            prop_assert_eq!(
-                None,
-                select(&bits, count(&bits)),
-                "expected no selected rank for count"
-            );
-
-            Ok(())
-        }
-
-        if bit_to_select {
-            inner(
-                bits,
-                true,
-                Bits::count_ones,
-                Bits::rank_ones,
-                Bits::select_ones,
-            )
-        } else {
-            inner(
-                bits,
-                false,
-                Bits::count_zeros,
-                Bits::rank_zeros,
-                Bits::select_zeros,
-            )
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn test_select_ones_via_count_rank_get(bits in gen_bits(0..=1024)) {
-            test_select_via_count_rank_get(bits, true)?;
-        }
-
-        #[test]
-        fn test_select_zeros_via_count_rank_get(bits in gen_bits(0..=1024)) {
-            test_select_via_count_rank_get(bits, false)?;
-        }
-    }
-
-    #[test]
-    fn test_basic_set() {
-        let example_data = vec![0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
-        let max_len = 8 * 8;
-        for len in 0..=max_len {
-            let bits = from_bytes_or_panic(example_data.clone(), len);
-            for set_at in 0..len {
-                for set_to in vec![true, false].into_iter() {
-                    let mut bits = bits.clone();
-                    assert!(bits.set(set_at, set_to).is_ok());
-                    let bits = bits;
-                    for i in 0..len {
-                        if i == set_at {
-                            assert_eq!(Some(set_to), bits.get(i));
+                    0..=word_len-1
+                };
+                (range.clone(), range)
+            };
+            (Just(all_bits), ranges).prop_map(|(all_bits, (mut a, mut b))| {
+                if all_bits.is_empty() {
+                    BitsOf::from(all_bits)
+                } else {
+                    let (skip_leading_bits, skip_trailing_bits) =
+                        if all_bits.len() <= 1 {
+                            if b < a { swap(&mut a, &mut b) }
+                            (a, b - a)
                         } else {
-                            assert_eq!(Some(i / 8 == i % 8), bits.get(i));
+                            (a, b)
+                        };
+                    let first_word = *all_bits.first().expect("Is not empty");
+                    let last_word = *all_bits.last().expect("Is not empty");
+                    let leading_bits = LeadingBitsOf {
+                        all_bits,
+                        skip_trailing_bits,
+                        skipped_trailing_bits_count_ones: if skip_trailing_bits > 0 {
+                            (last_word.count_ones() - last_word.rank_ones(Word::len() - skip_trailing_bits as u64).expect("Should not be out of bounds")) as u8
+                        } else { 0 }
+                    };
+                    BitsOf {
+                        leading_bits,
+                        skip_leading_bits,
+                        skipped_leading_bits_count_ones: {
+                            (first_word.rank_ones(skip_leading_bits as u64).expect("Should not be out of bounds")) as u8
                         }
                     }
-                    for i in len..=(max_len + 1) {
-                        assert_eq!(None, bits.get(i));
-                    }
                 }
-            }
-            let mut bits = bits;
-            for set_at in len..=(max_len + 1) {
-                assert!(bits.set(set_at, true).is_err());
-                assert!(bits.set(set_at, false).is_err());
-            }
-        }
+            })
+        })
     }
 
-    fn gen_bit_index(bits: &Bitvec) -> BoxedStrategy<Option<u64>> {
-        if bits.len() == 0 {
-            Just(None).boxed()
-        } else {
-            (0..bits.len()).prop_map(|x| Some(x)).boxed()
-        }
-    }
-
-    prop_compose! {
-        fn gen_set_task(byte_len: impl Into<SizeRange>)
-            (bits in gen_bits(byte_len))
-            (idx in gen_bit_index(&bits),
-             to in any::<bool>(),
-             bits in Just(bits))
-             -> (Bitvec, Option<(u64, bool)>) {
-                match idx {
-                    None => (bits, None),
-                    Some(idx) => (bits, Some((idx, to))),
-                }
-            }
+    fn some_bits() -> impl Strategy<Value = BitsOf<Vec<Word>>> {
+        bits(0..=64)
     }
 
     proptest! {
         #[test]
-        fn test_set((bits, task) in gen_set_task(0..=1024)) {
-            let (idx, to) = match task {
-                None => return Ok(()),
-                Some(x) => x,
-            };
+        fn bits_bits_len(bits in bits(0..=1024)) {
+            let bits = bits.borrow();
+            assert!(bits.leading_bits.len() <= bits_len(bits.leading_bits.all_bits));
+            assert!(bits.len() <= bits.leading_bits.len());
+            assert_eq!(bits.leading_bits.len() + bits.leading_bits.skip_trailing_bits as u64, bits_len(bits.leading_bits.all_bits));
+            assert_eq!(bits.len() + bits.skip_leading_bits as u64, bits.leading_bits.len());
+        }
 
-            let original_bits = bits.clone();
-            let mut bits = bits;
-            prop_assert_eq!(Ok(()), bits.set(idx, to));
-
-            for check_idx in 0..bits.len() {
-                if check_idx == idx {
-                    prop_assert_eq!(Some(to), bits.get(check_idx));
-                } else {
-                    prop_assert_eq!(original_bits.get(check_idx), bits.get(check_idx));
-                }
+        #[test]
+        fn bits_bits_get(bits in bits(0..=1024)) {
+            let bits = bits.borrow();
+            let leading = bits.leading_bits;
+            for i in 0..leading.len() {
+                assert!(leading.get(i).is_some());
+                assert_eq!(leading.get(i), get_bit(leading.all_bits, i));
             }
-        }
-    }
+            assert!(leading.get(leading.len()).is_none());
 
-    proptest! {
-        #[test]
-        fn test_push(bits in gen_bits(0..=1024),
-                     add in gen_vec(any::<bool>(), 0..=1024)) {
-            let mut as_bool_vec: Vec<_> = bits.iter().collect();
-            let mut bits = bits;
-            for b in add {
-                bits.push(b);
-                as_bool_vec.push(b);
+            for i in 0..bits.len() {
+                assert!(bits.get(i).is_some());
+                assert_eq!(bits.get(i), leading.get(i + bits.skip_leading_bits as u64));
             }
-            prop_assert_eq!(as_bool_vec, bits.into_iter().collect::<Vec<_>>());
+            assert!(bits.get(bits.len()).is_none());
         }
+
+        #[test]
+        fn bits_bits_count(bits in some_bits()) {
+            let bits = bits.borrow();
+            bits_tests::from_get_and_len::test_count(&bits);
+        }
+
+        #[test]
+        fn bits_bits_rank(bits in some_bits()) {
+            let bits = bits.borrow();
+            bits_tests::from_get_and_len::test_rank(&bits);
+        }
+
+        #[test]
+        fn bits_bits_select(bits in some_bits()) {
+            let bits = bits.borrow();
+            bits_tests::from_get_and_len::test_select(&bits);
+        }
+
+        #[test]
+        fn bits_bits_mut_replace(mut bits in some_bits()) {
+            let mut bits = bits.borrow_mut();
+            bits_tests::from_get_and_len::test_replace(&mut bits);
+        }
+
+        #[test]
+        fn bits_bits_mut_test_set(mut bits in some_bits()) {
+            let mut bits = bits.borrow_mut();
+            bits_tests::from_get_and_len::test_set_in_bounds(&mut bits);
+        }
+
+        #[test]
+        fn bits_bits_vec_test_push(mut bits in some_bits()) {
+            bits_tests::from_get_and_len::test_push(&mut bits);
+        }
+    }
+
+    fn eq_by_get<T: Bits + ?Sized>(l: &T, r: &T) -> bool {
+        l.len() == r.len() && (0..l.len()).all(|idx| l.get(idx) == r.get(idx))
     }
 
     proptest! {
         #[test]
-        fn test_iter_and_into_iter_via_get(bits in gen_bits(0..=1024)) {
-            let from_get: Vec<_> = (0..bits.len())
-                .map(|idx| bits.get(idx).unwrap())
-                .collect();
-            let from_iter: Vec<_> = bits.iter().collect();
-            let from_into_iter: Vec<_> = bits.into_iter().collect();
-            prop_assert_eq!(&from_get, &from_iter);
-            prop_assert_eq!(&from_get, &from_into_iter);
+        fn bits_eq_test_likely_ne(l in some_bits(), r in some_bits()) {
+            assert_eq!(l == r, eq_by_get(&l, &r));
         }
 
         #[test]
-        fn test_iter_and_into_iter_one_bits_via_get(bits in gen_bits(0..=1024)) {
-            let from_get: Vec<_> = (0..bits.len())
-                .filter(|&idx| bits.get(idx).unwrap())
-                .collect();
-            let from_iter: Vec<_> = bits.iter_one_bits().collect();
-            let from_into_iter: Vec<_> = bits.into_iter_one_bits().collect();
-            prop_assert_eq!(&from_get, &from_iter);
-            prop_assert_eq!(&from_get, &from_into_iter);
-        }
-
-        #[test]
-        fn test_iter_and_into_iter_zero_bits_via_get(bits in gen_bits(0..=1024)) {
-            let from_get: Vec<_> = (0..bits.len())
-                .filter(|&idx| !(bits.get(idx).unwrap()))
-                .collect();
-            let from_iter: Vec<_> = bits.iter_zero_bits().collect();
-            let from_into_iter: Vec<_> = bits.into_iter_zero_bits().collect();
-            prop_assert_eq!(&from_get, &from_iter);
-            prop_assert_eq!(&from_get, &from_into_iter);
+        fn bits_eq_test_eq(x in some_bits()) {
+            assert_eq!(x == x, eq_by_get(&x, &x));
         }
     }
 
-    #[test]
-    fn test_eq_and_cmp_examples() {
-        fn check(expected: Ordering, l: Bitvec, r: Bitvec) {
-            let expected_eq = match expected {
-                Ordering::Equal => true,
-                _ => false,
-            };
-            assert_eq!(expected_eq, l.eq(&r));
-            assert_eq!(expected, l.cmp(&r));
+    fn check_chunks(bits: BitsRef, chunk_size: u64) {
+        let mut offset = 0;
+        let mut saw_last_chunk = false;
+        let mut saw_count = 0;
+        for chunk in bits.chunks(chunk_size).expect("Chunk size should not be zero") {
+            assert!(!saw_last_chunk);
+            let chunk_len = bits_len(&chunk);
+            if chunk_len < chunk_size {
+                saw_last_chunk = true;
+            }
+            for idx in 0..chunk_len {
+                assert!(chunk.get(idx).is_some());
+                assert_eq!(chunk.get(idx), bits.get(idx + offset));
+            }
+            assert!(chunk.get(chunk_len).is_none());
+            offset += chunk_len;
+            saw_count += 1;
         }
-
-        // Should ignore extra bits
-        check(
-            Ordering::Equal,
-            from_bytes_or_panic(vec![0xff, 0xf0], 12),
-            from_bytes_or_panic(vec![0xff, 0xff], 12),
-        );
-
-        check(
-            Ordering::Equal,
-            from_bytes_or_panic(vec![], 0),
-            from_bytes_or_panic(vec![], 0),
-        );
-        check(
-            Ordering::Less,
-            from_bytes_or_panic(vec![0xff], 0),
-            from_bytes_or_panic(vec![0xff], 1),
-        );
-        check(
-            Ordering::Greater,
-            from_bytes_or_panic(vec![0xff], 1),
-            from_bytes_or_panic(vec![0xff], 0),
-        );
-        check(
-            Ordering::Equal,
-            from_bytes_or_panic(vec![0xff], 1),
-            from_bytes_or_panic(vec![0xff], 1),
-        );
-        check(
-            Ordering::Less,
-            from_bytes_or_panic(vec![0x00], 1),
-            from_bytes_or_panic(vec![0xff], 1),
-        );
-        check(
-            Ordering::Greater,
-            from_bytes_or_panic(vec![0xff], 1),
-            from_bytes_or_panic(vec![0x00], 1),
-        );
-    }
-
-    fn test_eq_and_cmp_on(l: Bitvec, r: Bitvec) -> Result<(), TestCaseError> {
-        let l_as_vec: Vec<_> = l.iter().collect();
-        let r_as_vec: Vec<_> = r.iter().collect();
-        prop_assert_eq!(l_as_vec.eq(&r_as_vec), l.eq(&r));
-        prop_assert_eq!(l_as_vec.cmp(&r_as_vec), l.cmp(&r));
-        Ok(())
+        assert_eq!(offset, bits.len());
+        assert_eq!(bits.chunks(chunk_size).unwrap().len(), saw_count);
     }
 
     proptest! {
         #[test]
-        fn test_eq_and_cmp_pair(l in gen_bits(0..=1024), r in gen_bits(0..=1024)) {
-            test_eq_and_cmp_on(l, r)?;
-        }
-
-        #[test]
-        fn test_eq_and_cmp_single(x in gen_bits(0..=1024)) {
-            let y = x.clone();
-            test_eq_and_cmp_on(x, y)?;
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn test_serialise_roundtrip(original in gen_bits(0..=1024)) {
-            let serialised = bincode::serialize(&original).unwrap();
-            let deserialised = bincode::deserialize(&serialised).unwrap();
-            prop_assert_eq!(original, deserialised);
+        fn bits_chunks(bits in some_bits(), chunk_size in 1..=999999999u64) {
+            check_chunks(bits.borrow(), chunk_size);
         }
     }
 }
-
-#[cfg(test)]
-pub use self::tests::gen_bits;

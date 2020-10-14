@@ -8,7 +8,6 @@ matrix:
     - rust: nightly
   fast_finish: true
 script:
-  - cargo test --verbose --all
-  - ./test_features.sh
-  - cargo build --verbose --all --release
-
+  - cargo test --verbose
+  - cargo check --no-default-features
+  - cargo check --no-default-features --features alloc

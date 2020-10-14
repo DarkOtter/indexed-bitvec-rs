@@ -1,39 +1,112 @@
 /*
-   Copyright 2018 DarkOtter
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-//! Operations to create indexes used to perform
+ * A part of indexed-bitvec-rs, a library implementing bitvectors with fast rank operations.
+ *     Copyright (C) 2020  DarkOtter
+ *
+ *     This program is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     This program is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+//! Core operations to create indexes used to perform
 //! fast rank & select operations on bitvectors.
+#![no_std]
 
-extern crate serde;
+#[cfg(any(test, feature = "std"))]
 #[macro_use]
-extern crate serde_derive;
+extern crate std;
 
-extern crate indexed_bitvec_core;
+#[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
+extern crate alloc;
 
-#[cfg(feature = "implement_heapsize")]
-extern crate heapsize;
+#[macro_use]
+extern crate static_assertions;
 
-#[cfg(test)]
-extern crate bincode;
 #[cfg(test)]
 extern crate proptest;
-#[cfg(test)]
-extern crate quickcheck;
+
+mod bits_traits;
+
+mod import {
+    pub mod prelude {
+        pub use core::ops::Range;
+        pub use core::mem::{swap, replace, align_of, size_of};
+        pub(crate) use crate::bits_traits::{OnesOrZeros, ZeroBits};
+        pub use crate::bits_traits::{Bits, BitsMut, BitsSplit, BitsVec};
+        pub use core::cmp::{min, max};
+
+        #[inline]
+        pub const fn ceil_div_u64(n: u64, d: u64) -> u64 {
+            n / d + ((n % d > 0) as u64)
+        }
+
+        #[cfg(any(test, feature = "std"))]
+        pub use std::vec::Vec;
+        #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
+        pub use alloc::vec::Vec;
+
+        #[cfg(any(test, feature = "std"))]
+        pub use std::boxed::Box;
+        #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
+        pub use alloc::boxed::Box;
+    }
+
+    pub use core::slice;
+    pub use core::iter;
+    pub use core::ops::{Deref, DerefMut};
+    pub use core::default::Default;
+    pub use core::borrow::{Borrow, BorrowMut};
+}
+
+mod word;
 
 pub mod bits;
-pub use crate::bits::Bits;
 
-mod indexed_bits;
-pub use crate::indexed_bits::IndexedBits;
+pub mod index_raw;
+
+// TODO: Look at adding doctests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use import::prelude::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn check_max_bits_in_bytes() {
+        assert!(<u64>::max_value() / 8 <= <usize>::max_value() as u64);
+    }
+
+    #[test]
+    fn test_ceil_div_u64_examples() {
+        assert_eq!(0, ceil_div_u64(0, 4));
+        assert_eq!(1, ceil_div_u64(1, 4));
+        assert_eq!(1, ceil_div_u64(4, 4));
+        assert_eq!(2, ceil_div_u64(5, 4));
+        assert_eq!(2, ceil_div_u64(6, 4));
+        assert_eq!(2, ceil_div_u64(7, 4));
+        assert_eq!(2, ceil_div_u64(8, 4));
+    }
+
+    proptest! {
+        #[test]
+        fn test_ceil_div_64(n in any::<u64>(), d in 1..999999u64) {
+            let floor_div = n / d;
+            let ceil_div = ceil_div_u64(n, d);
+            if floor_div == ceil_div {
+                assert_eq!(ceil_div * d, n);
+            } else {
+                assert_eq!(floor_div + 1, ceil_div);
+                assert!(floor_div * d < n);
+                assert!(ceil_div * d > n);
+            }
+        }
+    }
+}
