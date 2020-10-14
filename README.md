@@ -8,6 +8,7 @@ allow fast rank and select operations.
 
 This library is based on the design proposed by Zhou, Andersen and Kaminsky in
 *Space–Efficient, High–Performance Rank & Select Structures on Uncompressed Bit Sequences*.
+It has a simplified select operation which is *O(n)* rather than *O(1)*.
 
 ## Licensing
 
