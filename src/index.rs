@@ -339,8 +339,9 @@ impl<'a> IndexRef<'a> {
 
     fn select_hint<W: OnesOrZeros>(&self, target_rank: u64) -> (u64, u64) {
         let total_l2_blocks = (self.l1l2.len() as u64) * size::L2_BLOCKS_PER_L1_BLOCK;
+        let first_possible_l2_block = target_rank / size::BITS_PER_L2_BLOCK;
         let l2_block_with_higher_rank =
-            binary_search(0..total_l2_blocks, |l2_blocks_from_start| {
+            binary_search(first_possible_l2_block..total_l2_blocks, |l2_blocks_from_start| {
                 self.rank_hint::<W>(l2_blocks_from_start)
                     .expect("If it's not in range that's a bug")
                 > target_rank
