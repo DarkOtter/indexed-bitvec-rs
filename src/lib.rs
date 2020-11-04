@@ -40,7 +40,7 @@ mod import {
         pub use core::mem::{swap, replace, align_of, size_of};
         pub(crate) use crate::bits_traits::{OnesOrZeros, ZeroBits};
         pub use crate::bits_traits::{Bits, BitsMut, BitsSplit, BitsVec};
-        pub use core::cmp::{min, max};
+        pub use core::cmp::{min, max, Ordering};
 
         #[inline]
         pub const fn ceil_div_u64(n: u64, d: u64) -> u64 {

@@ -19,9 +19,9 @@
 //!
 use crate::import::prelude::*;
 use crate::word::*;
+use static_assertions::_core::intrinsics::add_with_overflow;
 
 // TODO: Consider extra tests
-// TODO: Consider implementing Ord
 
 fn add_should_not_overflow(a: u64, b: u64) -> u64 {
     debug_assert!(
@@ -359,13 +359,56 @@ fn generalised_eq(left: BitsOf<&[Word]>, right: BitsOf<&[Word]>) -> bool {
     if left_len != right.len() {
         return false;
     }
-        eq_in_range(
-            left.leading_bits.all_bits,
-            right.leading_bits.all_bits,
-            left.skip_leading_bits as u64,
-            right.skip_leading_bits as u64,
-            left_len,
-        )
+    eq_in_range(
+        left.leading_bits.all_bits,
+        right.leading_bits.all_bits,
+        left.skip_leading_bits as u64,
+        right.skip_leading_bits as u64,
+        left_len,
+    )
+}
+
+fn generalised_cmp(left: BitsOf<&[Word]>, right: BitsOf<&[Word]>) -> Ordering {
+    fn cmp_in_range(
+        left: &[Word],
+        right: &[Word],
+        left_offset: u64,
+        right_offset: u64,
+        length: u64,
+    ) -> Ordering {
+        let left_end_in_range =
+            bits_len(left).checked_sub(left_offset).map_or(false, |available_length| available_length >= length);
+        let right_end_in_range =
+            bits_len(right).checked_sub(right_offset).map_or(false, |available_length| available_length >= length);
+
+        if !(left_end_in_range & right_end_in_range) {
+            panic!("Indexes out of bounds")
+        }
+
+        for idx in 0..length {
+            let left_idx_bits = add_should_not_overflow(idx, left_offset);
+            let right_idx_bits = add_should_not_overflow(idx, right_offset);
+            let in_left = unsafe { crate::word::words_get_unchecked(left, left_idx_bits) };
+            let in_right = unsafe { crate::word::words_get_unchecked(right, right_idx_bits) };
+            let item_ordering = in_left.cmp(&in_right);
+            match item_ordering {
+                Ordering::Equal => continue,
+                Ordering::Greater | Ordering::Less => return item_ordering,
+            }
+        }
+
+        Ordering::Equal
+    }
+
+    cmp_in_range(
+        left.leading_bits.all_bits,
+        right.leading_bits.all_bits,
+        left.skip_leading_bits as u64,
+        right.skip_leading_bits as u64,
+        min(left.len(), right.len()),
+    ).then_with(|| {
+        left.len().cmp(&right.len())
+    })
 }
 
 fn copy<T: Copy>(x: &T) -> T {
@@ -374,20 +417,24 @@ fn copy<T: Copy>(x: &T) -> T {
 
 impl<'a> PartialEq for LeadingBitsOf<&'a [Word]> {
     fn eq(&self, other: &Self) -> bool {
-        if self.skip_trailing_bits == 0 {
-            other.skip_trailing_bits == 0 && self.all_bits == other.all_bits
-        } else {
-            other.skip_trailing_bits == self.skip_trailing_bits &&
-                self.all_bits.len() == other.all_bits.len() && {
-                let (self_partial, self_whole) =
-                    self.all_bits.split_last().expect("Should have at least 1 word");
-                let (other_partial, other_whole) =
-                    other.all_bits.split_last().expect("Should have at least 1 word");
-                self_whole == other_whole && {
-                    let partial_bits = Word::len() - self.skip_trailing_bits as u64;
-                    self_partial.zero_after_first_bits(partial_bits).eq(&other_partial.zero_after_first_bits(partial_bits))
-                }
+        fn split_trailing_partial_word(mut bits: LeadingBitsOf<&[Word]>) -> (&[Word], LeadingBitsOf<&[Word]>) {
+            if bits.skip_trailing_bits == 0 {
+                (bits.all_bits, LeadingBitsOf::empty())
+            } else {
+                assert!(bits.all_bits.len() > 0, "If there are trailing bits they have to be in a word");
+                let (whole_words, trailing_word) = bits.all_bits.split_at(bits.all_bits.len() - 1);
+                bits.all_bits = trailing_word;
+                assert!(bits_len(bits.all_bits) > bits.skip_trailing_bits as u64);
+                (whole_words, bits)
             }
+        }
+
+        other.skip_trailing_bits == self.skip_trailing_bits &&
+            self.all_bits.len() == other.all_bits.len() && {
+            debug_assert_eq!(self.len(), other.len());
+            let (self_whole, self_partial) = split_trailing_partial_word(copy(self));
+            let (other_whole, other_partial) = split_trailing_partial_word(copy(other));
+            self_whole == other_whole && generalised_eq(self_partial.into(), other_partial.into())
         }
     }
 }
@@ -396,21 +443,49 @@ impl<'a> Eq for LeadingBitsOf<&'a [Word]> {
 
 }
 
+impl<'a> PartialOrd for LeadingBitsOf<&'a [Word]> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
+impl<'a> Ord for LeadingBitsOf<&'a [Word]> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        fn split_trailing_partial_words(mut bits: LeadingBitsOf<&[Word]>, n: usize) -> (&[Word], LeadingBitsOf<&[Word]>) {
+            let (whole_words, final_words) = bits.all_bits.split_at(n);
+            bits.all_bits = final_words;
+            assert!(bits_len(bits.all_bits) >= bits.skip_trailing_bits as u64);
+            (whole_words, bits)
+        }
+
+        let initial_whole_words = (min(self.len(), other.len()) / Word::len()) as usize;
+        let (self_whole, self_partial) = split_trailing_partial_words(copy(self), initial_whole_words);
+        let (other_whole, other_partial) = split_trailing_partial_words(copy(other), initial_whole_words);
+        debug_assert_eq!(self_whole.len(), other_whole.len());
+        <[Word] as Ord>::cmp(self_whole, other_whole).then_with(||
+            generalised_cmp(self_partial.into(), other_partial.into()))
+    }
+}
+
+fn split_leading_partial_word(bits: BitsRef) -> (BitsRef, LeadingBitsOf<&[Word]>) {
+    let first_whole_word_index = sub_should_not_overflow(Word::len(), bits.skip_leading_bits as u64) % Word::len();
+    match bits.split_at(first_whole_word_index) {
+        None => (bits, LeadingBitsOf::empty())
+        Some((partial, whole_words)) => {
+            debug_assert!(whole_words.into_leading_bits().is_some());
+            let whole_words = unsafe { whole_words.into_leading_bits_unchecked() };
+            (partial, whole_words)
+        },
+    }
+}
+
 impl<'a> PartialEq for BitsRef<'a> {
     fn eq(&self, other: &Self) -> bool {
         if self.skip_leading_bits == other.skip_leading_bits {
-            match self.into_leading_bits() {
-                Some(simple_self) => {
-                    let simple_other = other
-                        .into_leading_bits()
-                        .expect("Other one should be leading bits only too");
-                    simple_self == simple_other
-                }
-                None => {
-                    // TODO: This case should be more optimised
-                    generalised_eq(copy(self), copy(other))
-                }
-            }
+            let (self_partial, self_whole_words) = split_leading_partial_word(copy(self));
+            let (other_partial, other_whole_words) = split_leading_partial_word(copy(other));
+            generalised_eq(self_partial, other_partial) && self_whole_words == other_whole_words
         } else {
             generalised_eq(copy(self), copy(other))
         }
@@ -418,6 +493,24 @@ impl<'a> PartialEq for BitsRef<'a> {
 }
 
 impl<'a> Eq for BitsRef<'a> {}
+
+impl<'a> PartialOrd for BitsRef<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Ord for BitsRef<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.skip_leading_bits == other.skip_leading_bits {
+            let (self_partial, self_whole_words) = split_leading_partial_word(copy(self));
+            let (other_partial, other_whole_words) = split_leading_partial_word(copy(other));
+            generalised_cmp(self_partial, other_partial).then_with(|| self_whole_words.cmp(&other_whole_words))
+        } else {
+            generalised_cmp(copy(self), copy(other))
+        }
+    }
+}
 
 impl<'a> PartialEq for BitsRefMut<'a> {
     fn eq(&self, other: &Self) -> bool {
@@ -432,6 +525,8 @@ impl<'a> PartialEq for BitsRefMut<'a> {
 impl<'a> Eq for BitsRefMut<'a> {
 
 }
+
+// TODO: Implement PartialOrd/Ord for the major borrow types
 
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
