@@ -104,21 +104,27 @@ pub mod tests {
     use super::*;
 
     fn sub_checked(a: u64, b: u64) -> u64 {
-        a.checked_sub(b).expect("This subtraction should not overflow")
+        a.checked_sub(b)
+            .expect("This subtraction should not overflow")
     }
 
     fn get_checked<B: Bits + ?Sized>(bits: &B, idx: u64) -> bool {
-        bits.get(idx).expect("This index should not be out of bounds")
+        bits.get(idx)
+            .expect("This index should not be out of bounds")
     }
 
     pub mod from_get_and_len {
         use super::*;
 
         pub fn test_count<B: Bits + ?Sized>(bits: &B) {
-            let direct_count_ones =
-                (0..bits.len()).map(|idx| get_checked(bits, idx) as u64).sum::<u64>();
+            let direct_count_ones = (0..bits.len())
+                .map(|idx| get_checked(bits, idx) as u64)
+                .sum::<u64>();
             assert_eq!(bits.count_ones(), direct_count_ones);
-            assert_eq!(bits.count_zeros(), sub_checked(bits.len(), direct_count_ones));
+            assert_eq!(
+                bits.count_zeros(),
+                sub_checked(bits.len(), direct_count_ones)
+            );
         }
 
         pub fn test_rank<B: Bits + ?Sized>(bits: &B) {
@@ -144,7 +150,9 @@ pub mod tests {
                 running_rank += bit as u64;
             }
             assert!(bits.select_ones(running_rank).is_none());
-            assert!(bits.select_zeros(sub_checked(bits.len(), running_rank)).is_none());
+            assert!(bits
+                .select_zeros(sub_checked(bits.len(), running_rank))
+                .is_none());
         }
 
         pub fn test_replace_at<B: Bits + BitsMut + ?Sized>(bits: &mut B, idx: u64) {
@@ -154,7 +162,7 @@ pub mod tests {
                     assert!(bits.replace(idx, true).is_none());
                     assert!(bits.replace(idx, false).is_none());
                     return;
-                },
+                }
             };
 
             assert_eq!(bits.replace(idx, true), Some(previous));

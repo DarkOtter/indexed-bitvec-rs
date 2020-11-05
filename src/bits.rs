@@ -107,12 +107,14 @@ impl<'a> Bits for LeadingBitsOf<&'a [Word]> {
     }
 
     fn select_ones(&self, target_rank: u64) -> Option<u64> {
-        self.all_bits.select_ones(target_rank)
+        self.all_bits
+            .select_ones(target_rank)
             .filter(|&idx| idx < self.len())
     }
 
     fn select_zeros(&self, target_rank: u64) -> Option<u64> {
-        self.all_bits.select_zeros(target_rank)
+        self.all_bits
+            .select_zeros(target_rank)
             .filter(|&idx| idx < self.len())
     }
 }
@@ -140,11 +142,15 @@ impl BitsVec for LeadingBitsOf<Vec<Word>> {
     fn push(&mut self, bit: bool) {
         if self.skip_trailing_bits == 0 {
             assert_eq!(self.skipped_trailing_bits_count_ones, 0);
-            self.all_bits.push(if bit { Word::msb() } else { Word::zeros() });
+            self.all_bits
+                .push(if bit { Word::msb() } else { Word::zeros() });
             self.skip_trailing_bits = Word::len() as u8 - 1;
         } else {
             let current_len = self.borrow().len();
-            let prev_bit = self.all_bits.replace(current_len, bit).expect("This index should not be out of bounds");
+            let prev_bit = self
+                .all_bits
+                .replace(current_len, bit)
+                .expect("This index should not be out of bounds");
             self.skip_trailing_bits -= 1;
             self.skipped_trailing_bits_count_ones -= prev_bit as u8;
         }
@@ -240,9 +246,8 @@ impl<'a> Bits for BitsRef<'a> {
     fn select_ones(&self, target_rank: u64) -> Option<u64> {
         let skip_leading_bits = self.skip_leading_bits as u64;
         // If this overflows then we must be out of range
-        let actual_target_rank = target_rank.checked_add(
-            self.skipped_leading_bits_count_ones as u64
-        )?;
+        let actual_target_rank =
+            target_rank.checked_add(self.skipped_leading_bits_count_ones as u64)?;
         self.leading_bits
             .select_ones(actual_target_rank)
             .map(|base_select| sub_should_not_overflow(base_select, skip_leading_bits))
@@ -251,9 +256,9 @@ impl<'a> Bits for BitsRef<'a> {
     fn select_zeros(&self, target_rank: u64) -> Option<u64> {
         let skip_leading_bits = self.skip_leading_bits as u64;
         // If this overflows then we must be out of range
-        let actual_target_rank = target_rank.checked_add(
-            sub_should_not_overflow(skip_leading_bits,
-            self.skipped_leading_bits_count_ones as u64
+        let actual_target_rank = target_rank.checked_add(sub_should_not_overflow(
+            skip_leading_bits,
+            self.skipped_leading_bits_count_ones as u64,
         ))?;
         self.leading_bits
             .select_zeros(actual_target_rank)
@@ -280,42 +285,71 @@ impl<'a> BitsMut for BitsRefMut<'a> {
 
 impl<'a> BitsSplit for BitsRef<'a> {
     fn split_at(self, idx_bits: u64) -> Option<(Self, Self)> {
-        fn split_leading_bits(leading_bits: LeadingBitsOf<&[Word]>, idx_bits: u64) -> Option<(LeadingBitsOf<&[Word]>, BitsRef)> {
+        fn split_leading_bits(
+            leading_bits: LeadingBitsOf<&[Word]>,
+            idx_bits: u64,
+        ) -> Option<(LeadingBitsOf<&[Word]>, BitsRef)> {
             if idx_bits >= bits_len(&leading_bits) {
-                return None
+                return None;
             }
             let all_bits = leading_bits.all_bits;
             let (whole_words, bits) = crate::word::split_idx(idx_bits);
             if bits == 0 {
                 let (first_part, second_part) = all_bits.split_at(whole_words);
-                let second_part = LeadingBitsOf { all_bits: second_part, ..leading_bits };
+                let second_part = LeadingBitsOf {
+                    all_bits: second_part,
+                    ..leading_bits
+                };
                 Some((first_part.into(), second_part.into()))
             } else {
-                let first_part: &[Word] = all_bits.get(..whole_words+1).expect("This should not be out of bounds");
-                let second_part : &[Word] = all_bits.get(whole_words..).expect("This should not be out of bounds");
-                let overlap_word : Word = *all_bits.get(whole_words).expect("This should not be out of bounds");
+                let first_part: &[Word] = all_bits
+                    .get(..whole_words + 1)
+                    .expect("This should not be out of bounds");
+                let second_part: &[Word] = all_bits
+                    .get(whole_words..)
+                    .expect("This should not be out of bounds");
+                let overlap_word: Word = *all_bits
+                    .get(whole_words)
+                    .expect("This should not be out of bounds");
                 let overlap_full_count = overlap_word.count_ones();
-                let overlap_first_part_count = overlap_word.rank_ones(bits).expect("This should not be out of bounds");
-                let overlap_second_part_count = sub_should_not_overflow(overlap_full_count, overlap_first_part_count);
-                let first_part = LeadingBitsOf { all_bits: first_part, skip_trailing_bits: (Word::len() - bits) as u8, skipped_trailing_bits_count_ones: overlap_second_part_count as u8 };
-                let second_part_leading = LeadingBitsOf { all_bits: second_part, ..leading_bits };
-                let second_part = BitsOf { leading_bits: second_part_leading, skip_leading_bits: bits as u8, skipped_leading_bits_count_ones: overlap_first_part_count as u8 };
+                let overlap_first_part_count = overlap_word
+                    .rank_ones(bits)
+                    .expect("This should not be out of bounds");
+                let overlap_second_part_count =
+                    sub_should_not_overflow(overlap_full_count, overlap_first_part_count);
+                let first_part = LeadingBitsOf {
+                    all_bits: first_part,
+                    skip_trailing_bits: (Word::len() - bits) as u8,
+                    skipped_trailing_bits_count_ones: overlap_second_part_count as u8,
+                };
+                let second_part_leading = LeadingBitsOf {
+                    all_bits: second_part,
+                    ..leading_bits
+                };
+                let second_part = BitsOf {
+                    leading_bits: second_part_leading,
+                    skip_leading_bits: bits as u8,
+                    skipped_leading_bits_count_ones: overlap_first_part_count as u8,
+                };
                 Some((first_part, second_part))
             }
         }
 
         // If this overflows then it must be out of range
         let actual_idx = idx_bits.checked_add(self.skip_leading_bits as u64)?;
-        let BitsOf { leading_bits, skip_leading_bits, skipped_leading_bits_count_ones } = self;
-        split_leading_bits(leading_bits, actual_idx)
-            .map(|(leading_part, trailing_part)| {
-                let leading_part = BitsOf {
-                    leading_bits: leading_part,
-                    skip_leading_bits,
-                    skipped_leading_bits_count_ones,
-                };
-                (leading_part, trailing_part)
-            })
+        let BitsOf {
+            leading_bits,
+            skip_leading_bits,
+            skipped_leading_bits_count_ones,
+        } = self;
+        split_leading_bits(leading_bits, actual_idx).map(|(leading_part, trailing_part)| {
+            let leading_part = BitsOf {
+                leading_bits: leading_part,
+                skip_leading_bits,
+                skipped_leading_bits_count_ones,
+            };
+            (leading_part, trailing_part)
+        })
     }
 }
 
@@ -334,10 +368,12 @@ fn generalised_eq(left: BitsOf<&[Word]>, right: BitsOf<&[Word]>) -> bool {
         right_offset: u64,
         length: u64,
     ) -> bool {
-        let left_end_in_range =
-            bits_len(left).checked_sub(left_offset).map_or(false, |available_length| available_length >= length);
-        let right_end_in_range =
-            bits_len(right).checked_sub(right_offset).map_or(false, |available_length| available_length >= length);
+        let left_end_in_range = bits_len(left)
+            .checked_sub(left_offset)
+            .map_or(false, |available_length| available_length >= length);
+        let right_end_in_range = bits_len(right)
+            .checked_sub(right_offset)
+            .map_or(false, |available_length| available_length >= length);
 
         if !(left_end_in_range & right_end_in_range) {
             panic!("Indexes out of bounds")
@@ -373,10 +409,12 @@ fn generalised_cmp(left: BitsOf<&[Word]>, right: BitsOf<&[Word]>) -> Ordering {
         right_offset: u64,
         length: u64,
     ) -> Ordering {
-        let left_end_in_range =
-            bits_len(left).checked_sub(left_offset).map_or(false, |available_length| available_length >= length);
-        let right_end_in_range =
-            bits_len(right).checked_sub(right_offset).map_or(false, |available_length| available_length >= length);
+        let left_end_in_range = bits_len(left)
+            .checked_sub(left_offset)
+            .map_or(false, |available_length| available_length >= length);
+        let right_end_in_range = bits_len(right)
+            .checked_sub(right_offset)
+            .map_or(false, |available_length| available_length >= length);
 
         if !(left_end_in_range & right_end_in_range) {
             panic!("Indexes out of bounds")
@@ -403,9 +441,8 @@ fn generalised_cmp(left: BitsOf<&[Word]>, right: BitsOf<&[Word]>) -> Ordering {
         left.skip_leading_bits as u64,
         right.skip_leading_bits as u64,
         min(left.len(), right.len()),
-    ).then_with(|| {
-        left.len().cmp(&right.len())
-    })
+    )
+    .then_with(|| left.len().cmp(&right.len()))
 }
 
 fn copy<T: Copy>(x: &T) -> T {
@@ -414,11 +451,16 @@ fn copy<T: Copy>(x: &T) -> T {
 
 impl<'a> PartialEq for LeadingBitsOf<&'a [Word]> {
     fn eq(&self, other: &Self) -> bool {
-        fn split_trailing_partial_word(mut bits: LeadingBitsOf<&[Word]>) -> (&[Word], LeadingBitsOf<&[Word]>) {
+        fn split_trailing_partial_word(
+            mut bits: LeadingBitsOf<&[Word]>,
+        ) -> (&[Word], LeadingBitsOf<&[Word]>) {
             if bits.skip_trailing_bits == 0 {
                 (bits.all_bits, LeadingBitsOf::empty())
             } else {
-                assert!(bits.all_bits.len() > 0, "If there are trailing bits they have to be in a word");
+                assert!(
+                    bits.all_bits.len() > 0,
+                    "If there are trailing bits they have to be in a word"
+                );
                 let (whole_words, trailing_word) = bits.all_bits.split_at(bits.all_bits.len() - 1);
                 bits.all_bits = trailing_word;
                 assert!(bits_len(bits.all_bits) > bits.skip_trailing_bits as u64);
@@ -426,19 +468,19 @@ impl<'a> PartialEq for LeadingBitsOf<&'a [Word]> {
             }
         }
 
-        other.skip_trailing_bits == self.skip_trailing_bits &&
-            self.all_bits.len() == other.all_bits.len() && {
-            debug_assert_eq!(self.len(), other.len());
-            let (self_whole, self_partial) = split_trailing_partial_word(copy(self));
-            let (other_whole, other_partial) = split_trailing_partial_word(copy(other));
-            self_whole == other_whole && generalised_eq(self_partial.into(), other_partial.into())
-        }
+        other.skip_trailing_bits == self.skip_trailing_bits
+            && self.all_bits.len() == other.all_bits.len()
+            && {
+                debug_assert_eq!(self.len(), other.len());
+                let (self_whole, self_partial) = split_trailing_partial_word(copy(self));
+                let (other_whole, other_partial) = split_trailing_partial_word(copy(other));
+                self_whole == other_whole
+                    && generalised_eq(self_partial.into(), other_partial.into())
+            }
     }
 }
 
-impl<'a> Eq for LeadingBitsOf<&'a [Word]> {
-
-}
+impl<'a> Eq for LeadingBitsOf<&'a [Word]> {}
 
 impl<'a> PartialOrd for LeadingBitsOf<&'a [Word]> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -446,10 +488,12 @@ impl<'a> PartialOrd for LeadingBitsOf<&'a [Word]> {
     }
 }
 
-
 impl<'a> Ord for LeadingBitsOf<&'a [Word]> {
     fn cmp(&self, other: &Self) -> Ordering {
-        fn split_trailing_partial_words(mut bits: LeadingBitsOf<&[Word]>, n: usize) -> (&[Word], LeadingBitsOf<&[Word]>) {
+        fn split_trailing_partial_words(
+            mut bits: LeadingBitsOf<&[Word]>,
+            n: usize,
+        ) -> (&[Word], LeadingBitsOf<&[Word]>) {
             let (whole_words, final_words) = bits.all_bits.split_at(n);
             bits.all_bits = final_words;
             assert!(bits_len(bits.all_bits) >= bits.skip_trailing_bits as u64);
@@ -457,23 +501,26 @@ impl<'a> Ord for LeadingBitsOf<&'a [Word]> {
         }
 
         let initial_whole_words = (min(self.len(), other.len()) / Word::len()) as usize;
-        let (self_whole, self_partial) = split_trailing_partial_words(copy(self), initial_whole_words);
-        let (other_whole, other_partial) = split_trailing_partial_words(copy(other), initial_whole_words);
+        let (self_whole, self_partial) =
+            split_trailing_partial_words(copy(self), initial_whole_words);
+        let (other_whole, other_partial) =
+            split_trailing_partial_words(copy(other), initial_whole_words);
         debug_assert_eq!(self_whole.len(), other_whole.len());
-        <[Word] as Ord>::cmp(self_whole, other_whole).then_with(||
-            generalised_cmp(self_partial.into(), other_partial.into()))
+        <[Word] as Ord>::cmp(self_whole, other_whole)
+            .then_with(|| generalised_cmp(self_partial.into(), other_partial.into()))
     }
 }
 
 fn split_leading_partial_word(bits: BitsRef) -> (BitsRef, LeadingBitsOf<&[Word]>) {
-    let first_whole_word_index = sub_should_not_overflow(Word::len(), bits.skip_leading_bits as u64) % Word::len();
+    let first_whole_word_index =
+        sub_should_not_overflow(Word::len(), bits.skip_leading_bits as u64) % Word::len();
     match bits.split_at(first_whole_word_index) {
         None => (bits, LeadingBitsOf::empty()),
         Some((partial, whole_words)) => {
             debug_assert!(whole_words.into_leading_bits().is_some());
             let whole_words = unsafe { whole_words.into_leading_bits_unchecked() };
             (partial, whole_words)
-        },
+        }
     }
 }
 
@@ -502,7 +549,8 @@ impl<'a> Ord for BitsRef<'a> {
         if self.skip_leading_bits == other.skip_leading_bits {
             let (self_partial, self_whole_words) = split_leading_partial_word(copy(self));
             let (other_partial, other_whole_words) = split_leading_partial_word(copy(other));
-            generalised_cmp(self_partial, other_partial).then_with(|| self_whole_words.cmp(&other_whole_words))
+            generalised_cmp(self_partial, other_partial)
+                .then_with(|| self_whole_words.cmp(&other_whole_words))
         } else {
             generalised_cmp(copy(self), copy(other))
         }
@@ -519,9 +567,7 @@ impl<'a> PartialEq for BitsRefMut<'a> {
     }
 }
 
-impl<'a> Eq for BitsRefMut<'a> {
-
-}
+impl<'a> Eq for BitsRefMut<'a> {}
 
 impl<'a> PartialOrd for BitsRefMut<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -597,29 +643,61 @@ impl Ord for BitsOf<Vec<Word>> {
 
 impl<T: crate::import::Borrow<[Word]>> LeadingBitsOf<T> {
     fn borrow(&self) -> LeadingBitsOf<&[Word]> {
-        let LeadingBitsOf { all_bits, skip_trailing_bits, skipped_trailing_bits_count_ones } = self;
-        LeadingBitsOf { all_bits: all_bits.borrow(), skip_trailing_bits: *skip_trailing_bits, skipped_trailing_bits_count_ones: *skipped_trailing_bits_count_ones }
+        let LeadingBitsOf {
+            all_bits,
+            skip_trailing_bits,
+            skipped_trailing_bits_count_ones,
+        } = self;
+        LeadingBitsOf {
+            all_bits: all_bits.borrow(),
+            skip_trailing_bits: *skip_trailing_bits,
+            skipped_trailing_bits_count_ones: *skipped_trailing_bits_count_ones,
+        }
     }
 }
 
 impl<T: crate::import::Borrow<[Word]>> BitsOf<T> {
     pub fn borrow(&self) -> BitsRef {
-        let BitsOf { leading_bits, skip_leading_bits, skipped_leading_bits_count_ones } = self;
-        BitsOf { leading_bits: leading_bits.borrow(), skip_leading_bits: *skip_leading_bits, skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones }
+        let BitsOf {
+            leading_bits,
+            skip_leading_bits,
+            skipped_leading_bits_count_ones,
+        } = self;
+        BitsOf {
+            leading_bits: leading_bits.borrow(),
+            skip_leading_bits: *skip_leading_bits,
+            skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones,
+        }
     }
 }
 
 impl<T: crate::import::BorrowMut<[Word]>> LeadingBitsOf<T> {
     fn borrow_mut(&mut self) -> LeadingBitsOf<&mut [Word]> {
-        let LeadingBitsOf { all_bits, skip_trailing_bits, skipped_trailing_bits_count_ones } = self;
-        LeadingBitsOf { all_bits: all_bits.borrow_mut(), skip_trailing_bits: *skip_trailing_bits, skipped_trailing_bits_count_ones: *skipped_trailing_bits_count_ones }
+        let LeadingBitsOf {
+            all_bits,
+            skip_trailing_bits,
+            skipped_trailing_bits_count_ones,
+        } = self;
+        LeadingBitsOf {
+            all_bits: all_bits.borrow_mut(),
+            skip_trailing_bits: *skip_trailing_bits,
+            skipped_trailing_bits_count_ones: *skipped_trailing_bits_count_ones,
+        }
     }
 }
 
 impl<T: crate::import::BorrowMut<[Word]>> BitsOf<T> {
     pub fn borrow_mut(&mut self) -> BitsRefMut {
-        let BitsOf { leading_bits, skip_leading_bits, skipped_leading_bits_count_ones } = self;
-        BitsOf { leading_bits: leading_bits.borrow_mut(), skip_leading_bits: *skip_leading_bits, skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones }
+        let BitsOf {
+            leading_bits,
+            skip_leading_bits,
+            skipped_leading_bits_count_ones,
+        } = self;
+        BitsOf {
+            leading_bits: leading_bits.borrow_mut(),
+            skip_leading_bits: *skip_leading_bits,
+            skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones,
+        }
     }
 }
 
@@ -647,19 +725,19 @@ impl<'a> Iterator for ChunksIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.data.split_at(self.bits_in_chunk) {
-                None => {
-                    if self.data.is_empty() {
-                        None
-                    } else {
-                        Some(replace(&mut self.data, BitsOf::empty()))
-                    }
-                },
-                Some(split) => {
-                    self.data = split.1;
-                    Some(split.0)
-                },
+            None => {
+                if self.data.is_empty() {
+                    None
+                } else {
+                    Some(replace(&mut self.data, BitsOf::empty()))
+                }
+            }
+            Some(split) => {
+                self.data = split.1;
+                Some(split.0)
             }
         }
+    }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len = self.len();
@@ -773,11 +851,10 @@ pub mod tests {
         words(n_words).prop_flat_map(|all_bits| {
             let ranges = {
                 let word_len = Word::len() as u8;
-                let range =
-                if all_bits.len() == 1 {
+                let range = if all_bits.len() == 1 {
                     0..=word_len
                 } else {
-                    0..=word_len-1
+                    0..=word_len - 1
                 };
                 (range.clone(), range)
             };
@@ -785,28 +862,38 @@ pub mod tests {
                 if all_bits.is_empty() {
                     BitsOf::from(all_bits)
                 } else {
-                    let (skip_leading_bits, skip_trailing_bits) =
-                        if all_bits.len() <= 1 {
-                            if b < a { swap(&mut a, &mut b) }
-                            (a, b - a)
-                        } else {
-                            (a, b)
-                        };
+                    let (skip_leading_bits, skip_trailing_bits) = if all_bits.len() <= 1 {
+                        if b < a {
+                            swap(&mut a, &mut b)
+                        }
+                        (a, b - a)
+                    } else {
+                        (a, b)
+                    };
                     let first_word = *all_bits.first().expect("Is not empty");
                     let last_word = *all_bits.last().expect("Is not empty");
                     let leading_bits = LeadingBitsOf {
                         all_bits,
                         skip_trailing_bits,
                         skipped_trailing_bits_count_ones: if skip_trailing_bits > 0 {
-                            (last_word.count_ones() - last_word.rank_ones(Word::len() - skip_trailing_bits as u64).expect("Should not be out of bounds")) as u8
-                        } else { 0 }
+                            (last_word.count_ones()
+                                - last_word
+                                    .rank_ones(Word::len() - skip_trailing_bits as u64)
+                                    .expect("Should not be out of bounds"))
+                                as u8
+                        } else {
+                            0
+                        },
                     };
                     BitsOf {
                         leading_bits,
                         skip_leading_bits,
                         skipped_leading_bits_count_ones: {
-                            (first_word.rank_ones(skip_leading_bits as u64).expect("Should not be out of bounds")) as u8
-                        }
+                            (first_word
+                                .rank_ones(skip_leading_bits as u64)
+                                .expect("Should not be out of bounds"))
+                                as u8
+                        },
                     }
                 }
             })
@@ -900,7 +987,10 @@ pub mod tests {
         let mut offset = 0;
         let mut saw_last_chunk = false;
         let mut saw_count = 0;
-        for chunk in bits.chunks(chunk_size).expect("Chunk size should not be zero") {
+        for chunk in bits
+            .chunks(chunk_size)
+            .expect("Chunk size should not be zero")
+        {
             assert!(!saw_last_chunk);
             let chunk_len = bits_len(&chunk);
             if chunk_len < chunk_size {

@@ -36,33 +36,33 @@ mod bits_traits;
 
 mod import {
     pub mod prelude {
-        pub use core::ops::Range;
-        pub use core::mem::{swap, replace, align_of, size_of};
-        pub(crate) use crate::bits_traits::{OnesOrZeros, ZeroBits};
         pub use crate::bits_traits::{Bits, BitsMut, BitsSplit, BitsVec};
-        pub use core::cmp::{min, max, Ordering};
+        pub(crate) use crate::bits_traits::{OnesOrZeros, ZeroBits};
+        pub use core::cmp::{max, min, Ordering};
+        pub use core::mem::{align_of, replace, size_of, swap};
+        pub use core::ops::Range;
 
         #[inline]
         pub const fn ceil_div_u64(n: u64, d: u64) -> u64 {
             n / d + ((n % d > 0) as u64)
         }
 
-        #[cfg(any(test, feature = "std"))]
-        pub use std::vec::Vec;
         #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
         pub use alloc::vec::Vec;
-
         #[cfg(any(test, feature = "std"))]
-        pub use std::boxed::Box;
+        pub use std::vec::Vec;
+
         #[cfg(all(feature = "alloc", not(any(test, feature = "std"))))]
         pub use alloc::boxed::Box;
+        #[cfg(any(test, feature = "std"))]
+        pub use std::boxed::Box;
     }
 
-    pub use core::slice;
+    pub use core::borrow::{Borrow, BorrowMut};
+    pub use core::default::Default;
     pub use core::iter;
     pub use core::ops::{Deref, DerefMut};
-    pub use core::default::Default;
-    pub use core::borrow::{Borrow, BorrowMut};
+    pub use core::slice;
 }
 
 mod word;
@@ -74,6 +74,7 @@ pub mod index;
 // TODO: Force documentation
 // TODO: Look at adding doctests
 // TODO: Review public interface
+// TODO: Add a feature to make it serialisable
 
 #[cfg(test)]
 mod tests {

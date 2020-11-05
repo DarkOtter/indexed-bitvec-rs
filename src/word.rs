@@ -24,7 +24,9 @@ fn slice_len<T>(slice: &[T]) -> usize {
 }
 
 #[inline]
-fn bits_len<T: Bits + ?Sized>(bits: &T) -> u64 { bits.len() }
+fn bits_len<T: Bits + ?Sized>(bits: &T) -> u64 {
+    bits.len()
+}
 
 const fn bits_in_size<T: Sized>() -> u64 {
     size_of::<T>() as u64 * 8
@@ -51,10 +53,14 @@ impl From<Word> for WordStorage {
 
 impl Word {
     pub const ZEROS: Self = Self(0);
-    pub const fn zeros() -> Self { Self::ZEROS }
+    pub const fn zeros() -> Self {
+        Self::ZEROS
+    }
 
     pub const ONES: Self = Self(!0);
-    pub const fn ones() -> Self { Self::ONES }
+    pub const fn ones() -> Self {
+        Self::ONES
+    }
 
     pub const fn len() -> u64 {
         bits_in_size::<WordStorage>()
@@ -102,15 +108,15 @@ impl Word {
             if leading_zeros >= len {
                 return None;
             } else if target_rank == 0 {
-                return Some((offset + leading_zeros) as u64)
+                return Some((offset + leading_zeros) as u64);
             }
 
             from <<= leading_zeros;
             offset += leading_zeros;
 
-            let part_count =
-                Self(from).rank_ones_direct(target_rank as u64)
-                    .expect("If this is out of range it's a bug") as u32;
+            let part_count = Self(from)
+                .rank_ones_direct(target_rank as u64)
+                .expect("If this is out of range it's a bug") as u32;
             from <<= target_rank;
             offset += target_rank;
             target_rank -= part_count;
@@ -182,7 +188,6 @@ impl crate::import::Default for Word {
     }
 }
 
-
 pub(crate) fn split_idx(idx_bits: u64) -> (usize, u64) {
     ((idx_bits / Word::len()) as usize, (idx_bits % Word::len()))
 }
@@ -190,12 +195,14 @@ pub(crate) fn split_idx(idx_bits: u64) -> (usize, u64) {
 pub(crate) unsafe fn words_get_unchecked(words: &[Word], idx: u64) -> bool {
     let (word_idx, bit_idx) = split_idx(idx);
     let word = {
-        #[cfg(test)] {
+        #[cfg(test)]
+        {
             debug_assert!(words.get(word_idx).is_some());
         };
         words.get_unchecked(word_idx)
     };
-    word.get(bit_idx).expect("The bit index should not be out of bounds")
+    word.get(bit_idx)
+        .expect("The bit index should not be out of bounds")
 }
 
 impl Bits for [Word] {
@@ -217,13 +224,20 @@ impl Bits for [Word] {
 
     fn rank_ones(&self, idx: u64) -> Option<u64> {
         let (word_idx, bit_idx) = split_idx(idx);
-        if word_idx >= slice_len(self) { return None; }
+        if word_idx >= slice_len(self) {
+            return None;
+        }
         let (words_before, words_from) = self.split_at(word_idx);
         let words_rank = words_before.count_ones();
         let last_word_rank = {
-            debug_assert!(words_from.get(0).is_some(), "This should be in bounds - we already checked");
+            debug_assert!(
+                words_from.get(0).is_some(),
+                "This should be in bounds - we already checked"
+            );
             let last_word = unsafe { words_from.get_unchecked(0) };
-            last_word.rank_ones(bit_idx).expect("This should be in bounds")
+            last_word
+                .rank_ones(bit_idx)
+                .expect("This should be in bounds")
         };
         Some(words_rank + last_word_rank)
     }
@@ -235,10 +249,10 @@ impl Bits for [Word] {
             let &word = words_iter.next()?;
             let count = word.count_ones();
             if count > target_rank {
-                let within_word =
-                    word.select_ones(target_rank)
-                        .expect("This should be in bounds - we already checked");
-                return Some(offset + within_word)
+                let within_word = word
+                    .select_ones(target_rank)
+                    .expect("This should be in bounds - we already checked");
+                return Some(offset + within_word);
             } else {
                 target_rank -= count;
                 offset += word.len();
@@ -253,10 +267,10 @@ impl Bits for [Word] {
             let &word = words_iter.next()?;
             let count = word.count_zeros();
             if count > target_rank {
-                let within_word =
-                    word.select_zeros(target_rank)
-                        .expect("This should be in bounds - we already checked");
-                return Some(offset + within_word)
+                let within_word = word
+                    .select_zeros(target_rank)
+                    .expect("This should be in bounds - we already checked");
+                return Some(offset + within_word);
             } else {
                 target_rank -= count;
                 offset += word.len();
@@ -363,7 +377,9 @@ pub mod tests {
 
     }
 
-    pub fn words(size: impl Into<proptest::collection::SizeRange>) -> impl Strategy<Value = Vec<Word>> {
+    pub fn words(
+        size: impl Into<proptest::collection::SizeRange>,
+    ) -> impl Strategy<Value = Vec<Word>> {
         proptest::collection::vec(any::<Word>(), size)
     }
 
@@ -449,6 +465,3 @@ pub mod tests {
         }
     }
 }
-
-
-

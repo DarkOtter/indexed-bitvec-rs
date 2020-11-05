@@ -15,9 +15,9 @@
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+use crate::bits::BitsRef;
+use crate::bits_traits::{OneBits, OnesOrZeros, ZeroBits};
 use crate::import::prelude::*;
-use crate::bits::{BitsRef};
-use crate::bits_traits::{OnesOrZeros, ZeroBits, OneBits};
 
 // TODO: Setup/check testing
 
@@ -89,18 +89,31 @@ impl IndexSize {
 pub struct L0Entry(u64);
 
 #[derive(Copy, Clone, Debug)]
-#[repr(transparent)]
-pub struct L1L2Entry(u64);
+pub struct L1L2Entry {
+    l1_rank: u32,
+    l2_entries: PackedL2Entries,
+}
 
 #[derive(Copy, Clone, Debug)]
 #[repr(transparent)]
-struct L2Ranks([u32; 4]);
+struct PackedL2Entries(u32);
+
+#[derive(Copy, Clone, Debug)]
+#[repr(transparent)]
+struct L2Entries([u32; 3]);
 
 impl L0Entry {
     const ZERO: Self = Self(0);
 }
 
 impl L1L2Entry {
+    const ZERO: Self = Self {
+        l1_rank: 0,
+        l2_entries: PackedL2Entries::ZERO,
+    };
+}
+
+impl PackedL2Entries {
     const ZERO: Self = Self(0);
 }
 
@@ -116,43 +129,93 @@ impl Default for L1L2Entry {
     }
 }
 
-impl L1L2Entry {
-    fn pack_raw(items: [u32; 4]) -> Option<Self> {
-        if items[1..].iter().any(|&x| x >= 0x0400) {
-            None
-        } else {
-            Some(Self(
-                0u64 | ((items[0] as u64) << 32)
-                    | ((items[1] as u64) << 22)
-                    | ((items[2] as u64) << 12)
-                    | ((items[3] as u64) << 2),
-            ))
+impl Default for PackedL2Entries {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl PackedL2Entries {
+    fn pack(items: L2Entries) -> Option<Self> {
+        #[inline(always)]
+        const fn lossless_low_bits(i: u32, n_bits: u32) -> Option<u32> {
+            if n_bits as usize >= size_of::<u32>() * 8 {
+                Some(i)
+            } else {
+                let mask = (1 << n_bits) - 1;
+                if (i & !mask) != 0 {
+                    None
+                } else {
+                    Some(i)
+                }
+            }
         }
+
+        let L2Entries([a, b, c]) = items;
+        let a = lossless_low_bits(a, 10)?;
+        let b = lossless_low_bits(b, 11)?;
+        let c = lossless_low_bits(c, 11)?;
+        Some(PackedL2Entries((a << 22) | (b << 11) | (c << 0)))
     }
 
-    fn unpack_raw(self) -> [u32; 4] {
-        [
-            ((self.0 >> 32) & 0xffffffff) as u32,
-            ((self.0 >> 22) & 0x3ff) as u32,
-            ((self.0 >> 12) & 0x3ff) as u32,
-            ((self.0 >> 2) & 0x3ff) as u32,
-        ]
+    fn unpack(self) -> L2Entries {
+        #[inline(always)]
+        const fn lossy_low_bits(i: u32, n_bits: u32) -> u32 {
+            if n_bits as usize >= size_of::<u32>() * 8 {
+                i
+            } else {
+                let mask = (1 << n_bits) - 1;
+                i & mask
+            }
+        }
+
+        let a = lossy_low_bits(self.0 >> 22, 10);
+        let b = lossy_low_bits(self.0 >> 11, 11);
+        let c = lossy_low_bits(self.0 >> 0, 11);
+        L2Entries([a, b, c])
+    }
+}
+
+impl L1L2Entry {
+    pub fn for_bits_with_count_as_l1rank(bits: BitsRef) -> Option<Self> {
+        if bits.len() > size::BITS_PER_L1_BLOCK {
+            return None;
+        }
+        debug_assert!(bits.len() <= 4 * size::BITS_PER_L2_BLOCK);
+        let mut l2_block_counts = [0u64; 4];
+        let chunks = bits
+            .chunks(size::BITS_PER_L2_BLOCK)
+            .expect("Size should not be zero");
+        debug_assert!(chunks.len() <= l2_block_counts.len());
+        chunks
+            .zip(l2_block_counts.iter_mut())
+            .for_each(|(block, count_ones)| *count_ones = block.count_ones());
+        l2_block_counts[1] += l2_block_counts[0];
+        l2_block_counts[2] += l2_block_counts[1];
+        l2_block_counts[3] += l2_block_counts[2];
+        debug_assert!(l2_block_counts
+            .iter()
+            .all(|&x| x <= u32::max_value() as u64));
+        Some(L1L2Entry {
+            l1_rank: l2_block_counts[3] as u32,
+            l2_entries: PackedL2Entries::pack(L2Entries([
+                l2_block_counts[0] as u32,
+                l2_block_counts[1] as u32,
+                l2_block_counts[2] as u32,
+            ]))?,
+        })
     }
 
-    fn pack(ranks: L2Ranks) -> Option<Self> {
-        let mut parts = ranks.0;
-        parts[3] -= parts[2];
-        parts[2] -= parts[1];
-        parts[1] -= parts[0];
-        Self::pack_raw(parts)
-    }
-
-    fn unpack(self) -> L2Ranks {
-        let mut res = self.unpack_raw();
-        res[1] += res[0];
-        res[2] += res[1];
-        res[3] += res[2];
-        L2Ranks(res)
+    pub fn rank_at_l2_index(&self, l2_idx: u64) -> Option<u32> {
+        if l2_idx >= 4 {
+            return None;
+        }
+        let l2_rank = if l2_idx > 0 {
+            self.l2_entries.unpack().0[l2_idx as usize - 1]
+        } else {
+            0
+        };
+        Some(self.l1_rank + l2_rank)
     }
 }
 
@@ -172,10 +235,15 @@ pub struct IndexedBits<Bits, Index> {
 pub type IndexedBitsRef<'a> = IndexedBits<BitsRef<'a>, IndexRef<'a>>;
 
 fn zip_eq<L, R>(left: L, right: R) -> crate::import::iter::Zip<L, R>
-where L: crate::import::iter::ExactSizeIterator,
-R: crate::import::iter::ExactSizeIterator,
+where
+    L: crate::import::iter::ExactSizeIterator,
+    R: crate::import::iter::ExactSizeIterator,
 {
-    debug_assert_eq!(left.len(), right.len(), "Iterators are expected to have the same length");
+    debug_assert_eq!(
+        left.len(),
+        right.len(),
+        "Iterators are expected to have the same length"
+    );
     left.zip(right)
 }
 
@@ -191,37 +259,21 @@ fn build_index<'a, 'b>(
         let l1_chunks = data_part
             .chunks(size::BITS_PER_L1_BLOCK)
             .expect("The chunk size should not be zero");
-        debug_assert_eq!(l1l2_index_part.len(), l1_chunks.len());
-        zip_eq(l1l2_index_part.iter_mut(), l1_chunks)
-            .for_each(|(entry, data_part)| {
-                let mut parts = [0; 4];
-                let l2_chunks = data_part
-                    .chunks(size::BITS_PER_L2_BLOCK)
-                    .expect("The chunk size should not be zero");
-                debug_assert!(parts.len() >= l2_chunks.len());
-                parts
-                    .iter_mut()
-                    .zip(l2_chunks)
-                    .for_each(|(write_count, data_part)| {
-                        let count = data_part.count_ones();
-                        debug_assert!(count < 0x400 as u64);
-                        *write_count = count as u32;
-                    });
-                *entry = L1L2Entry::pack_raw(parts).expect("There aren't enough ");
-            });
+        zip_eq(l1l2_index_part.iter_mut(), l1_chunks).for_each(|(entry, data_part)| {
+            *entry = L1L2Entry::for_bits_with_count_as_l1rank(data_part)
+                .expect("Counts must be in range or it's a bug");
+        });
         let mut running_total = 0u64;
         l1l2_index_part.iter_mut().for_each(|entry| {
-            let part_counts = entry.unpack_raw();
-            let mut ranks = L2Ranks([0; 4]);
-            debug_assert!(running_total < u32::max_value() as u64);
-            ranks.0[0] = running_total as u32;
-            ranks.0[1] = ranks.0[0] + part_counts[0];
-            ranks.0[2] = ranks.0[1] + part_counts[1];
-            ranks.0[3] = ranks.0[2] + part_counts[2];
-            *entry = L1L2Entry::pack(ranks).expect("All of the counts should be small enough");
-            running_total = ranks.0[3] as u64 + part_counts[3] as u64;
+            assert!(
+                running_total <= u32::max_value() as u64,
+                "Total rank within l1 should not exceed range of u32 or it's a bug"
+            );
+            let part_total = entry.l1_rank;
+            entry.l1_rank = running_total as u32;
+            running_total += part_total as u64;
         });
-        running_total as u64
+        running_total
     }
 
     let total_bits = data.len();
@@ -238,10 +290,11 @@ fn build_index<'a, 'b>(
     let l0_data_chunks = data
         .chunks(size::BITS_PER_L0_BLOCK)
         .expect("The chunk size should not be zero");
-    zip_eq(l0_index.iter_mut(), zip_eq(l0_l1l2_chunks, l0_data_chunks))
-        .for_each(|(write_count, (l1l2_part, data_part))| {
+    zip_eq(l0_index.iter_mut(), zip_eq(l0_l1l2_chunks, l0_data_chunks)).for_each(
+        |(write_count, (l1l2_part, data_part))| {
             *write_count = L0Entry(build_l1(l1l2_part, data_part))
-        });
+        },
+    );
 
     let mut running_total = 0;
     l0_index.iter_mut().for_each(|entry| {
@@ -256,8 +309,7 @@ fn midpoint(a: u64, b: u64) -> u64 {
     fn check_midpoint(a: u64, b: u64, mid: u64) -> bool {
         let min = min(a, b);
         let max = max(a, b);
-        mid >= min && mid <= max
-        && max - (mid - min + mid) <= 1
+        mid >= min && mid <= max && max - (mid - min + mid) <= 1
     }
 
     let a_hi = a >> 1;
@@ -273,11 +325,11 @@ fn midpoint(a: u64, b: u64) -> u64 {
     mid
 }
 
-fn binary_search(
-    mut in_range: Range<u64>,
-    is_greater_or_equal_tgt: impl Fn(u64) -> bool,
-) -> u64 {
-    assert!(in_range.start <= in_range.end, "Range start bound must not be after end bound");
+fn binary_search(mut in_range: Range<u64>, is_greater_or_equal_tgt: impl Fn(u64) -> bool) -> u64 {
+    assert!(
+        in_range.start <= in_range.end,
+        "Range start bound must not be after end bound"
+    );
 
     const MIN_SEARCH_SIZE: u64 = 16;
     while in_range.end.wrapping_sub(in_range.start) > MIN_SEARCH_SIZE {
@@ -311,7 +363,7 @@ impl<'a> IndexRef<'a> {
         let l1_blocks_from_start = (l2_blocks_from_start / size::L2_BLOCKS_PER_L1_BLOCK) as usize;
         let &l1l2_entry = self.l1l2.get(l1_blocks_from_start)?;
 
-        let l2_idx = (l2_blocks_from_start % size::L2_BLOCKS_PER_L1_BLOCK) as usize;
+        let l2_idx = l2_blocks_from_start % size::L2_BLOCKS_PER_L1_BLOCK;
         let l0_idx = l1_blocks_from_start / size::L1_BLOCKS_PER_L0_BLOCK;
 
         let l0_rank = if l0_idx == 0 {
@@ -322,11 +374,9 @@ impl<'a> IndexRef<'a> {
             unsafe { self.l0.get_unchecked(get_idx) }.0
         };
 
-        let l1l2_rank = {
-            let l2_index = l1l2_entry.unpack();
-            debug_assert!(l2_index.0.get(l2_idx).is_some());
-            *unsafe { l2_index.0.get_unchecked(l2_idx) }
-        };
+        let l1l2_rank = l1l2_entry
+            .rank_at_l2_index(l2_idx)
+            .expect("L2 index should be in range or it's a bug");
 
         Some(l0_rank + l1l2_rank as u64)
     }
@@ -340,20 +390,24 @@ impl<'a> IndexRef<'a> {
     fn select_hint<W: OnesOrZeros>(&self, target_rank: u64) -> (u64, u64) {
         let total_l2_blocks = (self.l1l2.len() as u64) * size::L2_BLOCKS_PER_L1_BLOCK;
         let first_possible_l2_block = target_rank / size::BITS_PER_L2_BLOCK;
-        let l2_block_with_higher_rank =
-            binary_search(first_possible_l2_block..total_l2_blocks, |l2_blocks_from_start| {
+        let l2_block_with_higher_rank = binary_search(
+            first_possible_l2_block..total_l2_blocks,
+            |l2_blocks_from_start| {
                 self.rank_hint::<W>(l2_blocks_from_start)
                     .expect("If it's not in range that's a bug")
-                > target_rank
-            });
-        let l2_block_to_search_from =
-            l2_block_with_higher_rank.checked_sub(1)
-                .expect("The first block must have rank 0, so it can't have a higher rank");
-        let l2_block_rank =
-            self.rank_hint::<W>(l2_block_to_search_from)
-                .expect("If it's not in range that's a bug");
+                    > target_rank
+            },
+        );
+        let l2_block_to_search_from = l2_block_with_higher_rank
+            .checked_sub(1)
+            .expect("The first block must have rank 0, so it can't have a higher rank");
+        let l2_block_rank = self
+            .rank_hint::<W>(l2_block_to_search_from)
+            .expect("If it's not in range that's a bug");
         let idx_to_search_from = l2_block_to_search_from * size::BITS_PER_L2_BLOCK;
-        let search_rank = target_rank.checked_sub(l2_block_rank).expect("If rank of hint is too high that's a bug");
+        let search_rank = target_rank
+            .checked_sub(l2_block_rank)
+            .expect("If rank of hint is too high that's a bug");
         (idx_to_search_from, search_rank)
     }
 }
@@ -365,7 +419,10 @@ impl<'a> IndexedBitsRef<'a> {
         data: BitsRef<'a>,
     ) -> Self {
         Self {
-            index: IndexStorage { l0: l0_index, l1l2: l1l2_index },
+            index: IndexStorage {
+                l0: l0_index,
+                l1l2: l1l2_index,
+            },
             data,
         }
     }
@@ -399,18 +456,22 @@ impl<'a> IndexedBitsRef<'a> {
 
             let rank_from_data = {
                 let l2_block_start_idx = l2_blocks_from_start * size::BITS_PER_L2_BLOCK;
-                let from_l2_block_idx = idx.checked_sub(l2_block_start_idx)
+                let from_l2_block_idx = idx
+                    .checked_sub(l2_block_start_idx)
                     .expect("It's impossible for the l2 block to start after the target position");
-                let (_data_upto_index_pos, data_from_index_pos) =
-                    self.data.split_at(l2_block_start_idx)
-                        .expect("If the index is not in range it's a bug");
-                data_from_index_pos.rank_ones(from_l2_block_idx)
+                let (_data_upto_index_pos, data_from_index_pos) = self
+                    .data
+                    .split_at(l2_block_start_idx)
+                    .expect("If the index is not in range it's a bug");
+                data_from_index_pos
+                    .rank_ones(from_l2_block_idx)
                     .expect("If the index is not in range it's a bug")
             };
 
-            let rank_from_index =
-                self.index.rank_ones_hint(l2_blocks_from_start)
-                    .expect("If the index is not in range it's a bug");
+            let rank_from_index = self
+                .index
+                .rank_ones_hint(l2_blocks_from_start)
+                .expect("If the index is not in range it's a bug");
 
             Some(rank_from_index + rank_from_data)
         }
@@ -425,12 +486,14 @@ impl<'a> IndexedBitsRef<'a> {
         if rank >= self.count_ones() {
             return None;
         }
-        let (idx_to_search_from, further_search_rank) =
-            self.index.select_hint::<OneBits>(rank);
-        let (_data_to_ignore, data_to_search) = self.data.split_at(idx_to_search_from)
+        let (idx_to_search_from, further_search_rank) = self.index.select_hint::<OneBits>(rank);
+        let (_data_to_ignore, data_to_search) = self
+            .data
+            .split_at(idx_to_search_from)
             .expect("If the index of hint is out of range that's a bug");
-        let search_result =
-            data_to_search.select_ones(further_search_rank).expect("If the search rank is out of range that's a bug");
+        let search_result = data_to_search
+            .select_ones(further_search_rank)
+            .expect("If the search rank is out of range that's a bug");
         Some(idx_to_search_from + search_result)
     }
 
@@ -438,12 +501,14 @@ impl<'a> IndexedBitsRef<'a> {
         if rank >= self.count_zeros() {
             return None;
         }
-        let (idx_to_search_from, further_search_rank) =
-            self.index.select_hint::<ZeroBits>(rank);
-        let (_data_to_ignore, data_to_search) = self.data.split_at(idx_to_search_from)
+        let (idx_to_search_from, further_search_rank) = self.index.select_hint::<ZeroBits>(rank);
+        let (_data_to_ignore, data_to_search) = self
+            .data
+            .split_at(idx_to_search_from)
             .expect("If the index of hint is out of range that's a bug");
-        let search_result =
-            data_to_search.select_zeros(further_search_rank).expect("If the search rank is out of range that's a bug");
+        let search_result = data_to_search
+            .select_zeros(further_search_rank)
+            .expect("If the search rank is out of range that's a bug");
         Some(idx_to_search_from + search_result)
     }
 }
@@ -451,8 +516,8 @@ impl<'a> IndexedBitsRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::word::Word;
     use crate::bits::BitsOf;
+    use crate::word::Word;
 
     impl IndexSize {
         fn l0_vec(&self) -> Vec<L0Entry> {
@@ -473,10 +538,11 @@ mod tests {
         let n_bits: u64 = (1 << 19) - 1;
         let n_words: usize = ceil_div_u64(n_bits, Word::len()) as usize;
         use oorandom::Rand64;
-        let mut rng = Rand64::new( 427319723125543870550137410719523151);
+        let mut rng = Rand64::new(427319723125543870550137410719523151);
         let data = {
             let mut data = vec![Word::zeros(); n_words];
-            data.iter_mut().for_each(|cell| *cell = Word::from(lower_u32_of_u64(rng.rand_u64())));
+            data.iter_mut()
+                .for_each(|cell| *cell = Word::from(lower_u32_of_u64(rng.rand_u64())));
             data
         };
         let data = BitsOf::from(data.as_slice());
@@ -497,9 +563,7 @@ mod tests {
 
         let mut gen_sorted_in = |range: Range<u64>| {
             let Range { start, end } = range;
-            let mut r: Vec<u64> = (0..1000)
-                .map(|_| rng.rand_range(start..end))
-                .collect();
+            let mut r: Vec<u64> = (0..1000).map(|_| rng.rand_range(start..end)).collect();
             r.sort_unstable();
             r
         };
