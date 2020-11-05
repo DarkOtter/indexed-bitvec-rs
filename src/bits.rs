@@ -19,9 +19,6 @@
 //!
 use crate::import::prelude::*;
 use crate::word::*;
-use static_assertions::_core::intrinsics::add_with_overflow;
-
-// TODO: Consider extra tests
 
 fn add_should_not_overflow(a: u64, b: u64) -> u64 {
     debug_assert!(
@@ -471,7 +468,7 @@ impl<'a> Ord for LeadingBitsOf<&'a [Word]> {
 fn split_leading_partial_word(bits: BitsRef) -> (BitsRef, LeadingBitsOf<&[Word]>) {
     let first_whole_word_index = sub_should_not_overflow(Word::len(), bits.skip_leading_bits as u64) % Word::len();
     match bits.split_at(first_whole_word_index) {
-        None => (bits, LeadingBitsOf::empty())
+        None => (bits, LeadingBitsOf::empty()),
         Some((partial, whole_words)) => {
             debug_assert!(whole_words.into_leading_bits().is_some());
             let whole_words = unsafe { whole_words.into_leading_bits_unchecked() };
@@ -526,8 +523,33 @@ impl<'a> Eq for BitsRefMut<'a> {
 
 }
 
-// TODO: Implement PartialOrd/Ord for the major borrow types
+impl<'a> PartialOrd for BitsRefMut<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.borrow().partial_cmp(&other.borrow())
+    }
 
+    fn lt(&self, other: &Self) -> bool {
+        self.borrow().lt(&other.borrow())
+    }
+
+    fn le(&self, other: &Self) -> bool {
+        self.borrow().le(&other.borrow())
+    }
+
+    fn gt(&self, other: &Self) -> bool {
+        self.borrow().gt(&other.borrow())
+    }
+
+    fn ge(&self, other: &Self) -> bool {
+        self.borrow().ge(&other.borrow())
+    }
+}
+
+impl<'a> Ord for BitsRefMut<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.borrow().cmp(&other.borrow())
+    }
+}
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl PartialEq for BitsOf<Vec<Word>> {
@@ -542,6 +564,36 @@ impl PartialEq for BitsOf<Vec<Word>> {
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl Eq for BitsOf<Vec<Word>> {}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl PartialOrd for BitsOf<Vec<Word>> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.borrow().partial_cmp(&other.borrow())
+    }
+
+    fn lt(&self, other: &Self) -> bool {
+        self.borrow().lt(&other.borrow())
+    }
+
+    fn le(&self, other: &Self) -> bool {
+        self.borrow().le(&other.borrow())
+    }
+
+    fn gt(&self, other: &Self) -> bool {
+        self.borrow().gt(&other.borrow())
+    }
+
+    fn ge(&self, other: &Self) -> bool {
+        self.borrow().ge(&other.borrow())
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+impl Ord for BitsOf<Vec<Word>> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.borrow().cmp(&other.borrow())
+    }
+}
 
 impl<T: crate::import::Borrow<[Word]>> LeadingBitsOf<T> {
     fn borrow(&self) -> LeadingBitsOf<&[Word]> {

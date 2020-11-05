@@ -33,7 +33,7 @@ const fn bits_in_size<T: Sized>() -> u64 {
 pub(crate) type WordStorage = u32;
 
 /// The bits of a single word, as a sequence from MSB to LSB.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Word(WordStorage);
 
@@ -428,6 +428,24 @@ pub mod tests {
         #[test]
         fn words_bits_mut_test_set(mut words in some_words()) {
             bits_tests::from_get_and_len::test_set_in_bounds(words.as_mut_slice());
+        }
+    }
+
+    fn expected_lexicographic_ordering(l: Word, r: Word) -> Ordering {
+        for i in 0..Word::len() {
+            let cmp = l.get(i).unwrap().cmp(&r.get(i).unwrap());
+            match cmp {
+                Ordering::Equal => continue,
+                Ordering::Less | Ordering::Greater => return cmp,
+            }
+        }
+        Ordering::Equal
+    }
+
+    proptest! {
+        #[test]
+        fn words_ord_is_lexicographic((l, r) in any::<(Word, Word)>()) {
+            assert_eq!(l.cmp(&r), expected_lexicographic_ordering(l, r));
         }
     }
 }
