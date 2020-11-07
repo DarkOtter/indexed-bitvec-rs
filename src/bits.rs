@@ -20,6 +20,7 @@
 use crate::import::prelude::*;
 use crate::word::*;
 
+// TODO: Check everything in here is still tested
 fn add_should_not_overflow(a: u64, b: u64) -> u64 {
     debug_assert!(
         a.checked_add(b).is_some(),
@@ -915,7 +916,7 @@ pub mod tests {
         }
 
         #[test]
-        fn bits_bits_get(bits in bits(0..=1024)) {
+        fn bits_bits_get(bits in some_bits()) {
             let bits = bits.borrow();
             let leading = bits.leading_bits;
             for i in 0..leading.len() {
