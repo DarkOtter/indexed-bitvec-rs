@@ -15,9 +15,9 @@
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-//! Core operations to create indexes used to perform
-//! fast rank & select operations on bitvectors.
 #![no_std]
+
+
 
 #[cfg(any(test, feature = "std"))]
 #[macro_use]
@@ -75,6 +75,8 @@ pub mod index;
 // TODO: Look at adding doctests
 // TODO: Review public interface
 // TODO: Add a feature to make it serialisable
+
+// TODO: Check and configure the copyright headers
 
 #[cfg(test)]
 mod tests {

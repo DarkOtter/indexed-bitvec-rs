@@ -158,7 +158,7 @@ impl BitsVec for LeadingBitsOf<Vec<Word>> {
     }
 }
 
-/// Bits stored as a sequence of bytes (most significant bit first).
+/// Bits stored as a sequence of words (most significant bit first).
 #[derive(Debug, Copy, Clone)]
 pub struct BitsOf<T> {
     leading_bits: LeadingBitsOf<T>,
@@ -291,7 +291,11 @@ impl<'a> BitsSplit for BitsRef<'a> {
             idx_bits: u64,
         ) -> Option<(LeadingBitsOf<&[Word]>, BitsRef)> {
             if idx_bits >= bits_len(&leading_bits) {
-                return None;
+                return if idx_bits == bits_len(&leading_bits) {
+                    Some((leading_bits, BitsRef::empty()))
+                } else {
+                    None
+                }
             }
             let all_bits = leading_bits.all_bits;
             let (whole_words, bits) = crate::word::split_idx(idx_bits);
@@ -907,51 +911,51 @@ pub mod tests {
 
     proptest! {
         #[test]
-        fn bits_bits_len(bits in bits(0..=1024)) {
+        fn bits_bits_test_len(bits in bits(0..=1024)) {
             let bits = bits.borrow();
-            assert!(bits.leading_bits.len() <= bits_len(bits.leading_bits.all_bits));
-            assert!(bits.len() <= bits.leading_bits.len());
-            assert_eq!(bits.leading_bits.len() + bits.leading_bits.skip_trailing_bits as u64, bits_len(bits.leading_bits.all_bits));
-            assert_eq!(bits.len() + bits.skip_leading_bits as u64, bits.leading_bits.len());
+            prop_assert!(bits.leading_bits.len() <= bits_len(bits.leading_bits.all_bits));
+            prop_assert!(bits.len() <= bits.leading_bits.len());
+            prop_assert_eq!(bits.leading_bits.len() + bits.leading_bits.skip_trailing_bits as u64, bits_len(bits.leading_bits.all_bits));
+            prop_assert_eq!(bits.len() + bits.skip_leading_bits as u64, bits.leading_bits.len());
         }
 
         #[test]
-        fn bits_bits_get(bits in some_bits()) {
+        fn bits_bits_test_get(bits in some_bits()) {
             let bits = bits.borrow();
             let leading = bits.leading_bits;
             for i in 0..leading.len() {
-                assert!(leading.get(i).is_some());
-                assert_eq!(leading.get(i), get_bit(leading.all_bits, i));
+                prop_assert!(leading.get(i).is_some());
+                prop_assert_eq!(leading.get(i), get_bit(leading.all_bits, i));
             }
             assert!(leading.get(leading.len()).is_none());
 
             for i in 0..bits.len() {
-                assert!(bits.get(i).is_some());
-                assert_eq!(bits.get(i), leading.get(i + bits.skip_leading_bits as u64));
+                prop_assert!(bits.get(i).is_some());
+                prop_assert_eq!(bits.get(i), leading.get(i + bits.skip_leading_bits as u64));
             }
-            assert!(bits.get(bits.len()).is_none());
+            prop_assert!(bits.get(bits.len()).is_none());
         }
 
         #[test]
-        fn bits_bits_count(bits in some_bits()) {
+        fn bits_bits_test_count(bits in some_bits()) {
             let bits = bits.borrow();
             bits_tests::from_get_and_len::test_count(&bits);
         }
 
         #[test]
-        fn bits_bits_rank(bits in some_bits()) {
+        fn bits_bits_test_rank(bits in some_bits()) {
             let bits = bits.borrow();
             bits_tests::from_get_and_len::test_rank(&bits);
         }
 
         #[test]
-        fn bits_bits_select(bits in some_bits()) {
+        fn bits_bits_test_select(bits in some_bits()) {
             let bits = bits.borrow();
             bits_tests::from_get_and_len::test_select(&bits);
         }
 
         #[test]
-        fn bits_bits_mut_replace(mut bits in some_bits()) {
+        fn bits_bits_mut_test_replace(mut bits in some_bits()) {
             let mut bits = bits.borrow_mut();
             bits_tests::from_get_and_len::test_replace(&mut bits);
         }
@@ -963,25 +967,39 @@ pub mod tests {
         }
 
         #[test]
+        fn bits_bits_split_test_split_absent(bits in some_bits()) {
+            let bits: BitsRef = bits.borrow();
+            prop_assert!(bits.split_at(bits.len() + 1).is_none());
+        }
+
+        #[test]
+        fn bits_bits_split_test_split_present((bits, split_at) in some_bits().prop_flat_map(|bits| { let len = bits.len(); (Just(bits), 0..=len)})) {
+            let bits: BitsRef = bits.borrow();
+            let split = bits.split_at(split_at);
+            prop_assert!(split.is_some());
+            let (left, right) = split.unwrap();
+            prop_assert_eq!(split_at, left.len());
+            prop_assert_eq!(bits.len(), left.len() + right.len());
+            for i in 0..left.len() {
+                prop_assert_eq!(bits.get(i), left.get(i));
+            }
+            for i in 0..right.len() {
+                prop_assert_eq!(bits.get(split_at + i), right.get(i));
+            }
+        }
+
+        #[test]
         fn bits_bits_vec_test_push(mut bits in some_bits()) {
             bits_tests::from_get_and_len::test_push(&mut bits);
         }
     }
 
-    fn eq_by_get<T: Bits + ?Sized>(l: &T, r: &T) -> bool {
-        l.len() == r.len() && (0..l.len()).all(|idx| l.get(idx) == r.get(idx))
-    }
-
-    proptest! {
-        #[test]
-        fn bits_eq_test_likely_ne(l in some_bits(), r in some_bits()) {
-            assert_eq!(l == r, eq_by_get(&l, &r));
-        }
-
-        #[test]
-        fn bits_eq_test_eq(x in some_bits()) {
-            assert_eq!(x == x, eq_by_get(&x, &x));
-        }
+    #[test]
+    fn empty_is_empty() {
+        let empty = BitsRef::empty();
+        assert_eq!(0, empty.len());
+        assert_eq!(None, empty.get(0));
+        assert_eq!(true, empty.is_empty());
     }
 
     fn check_chunks(bits: BitsRef, chunk_size: u64) {
@@ -1013,6 +1031,41 @@ pub mod tests {
         #[test]
         fn bits_chunks(bits in some_bits(), chunk_size in 1..=999999999u64) {
             check_chunks(bits.borrow(), chunk_size);
+        }
+    }
+
+    fn to_bool_vec<T: Bits + ?Sized>(bits: &T) -> Vec<bool> {
+        (0..bits.len()).map(|idx| bits.get(idx).expect("Should not be out of bounds")).collect()
+    }
+
+    fn eq_by_vec<L: Bits + ?Sized, R: Bits + ?Sized>(l: &L, r: &R) -> bool {
+        <Vec<bool> as PartialEq>::eq(&to_bool_vec(l), &to_bool_vec(r))
+    }
+
+    fn cmp_by_vec<L: Bits + ?Sized, R: Bits + ?Sized>(l: &L, r: &R) -> Ordering {
+        <Vec<bool> as Ord>::cmp(&to_bool_vec(l), &to_bool_vec(r))
+    }
+
+
+    proptest! {
+        #[test]
+        fn bits_eq_test_likely_ne(l in some_bits(), r in some_bits()) {
+            prop_assert_eq!(l == r, eq_by_vec(&l, &r));
+        }
+
+        #[test]
+        fn bits_eq_test_eq(x in some_bits()) {
+            prop_assert_eq!(x == x, eq_by_vec(&x, &x));
+        }
+
+        #[test]
+        fn bits_cmp_test_likely_ne(l in some_bits(), r in some_bits()) {
+            prop_assert_eq!(l.cmp(&r), cmp_by_vec(&l, &r));
+        }
+
+        #[test]
+        fn bits_cmp_test_eq(x in some_bits()) {
+            prop_assert_eq!(x.cmp(&x), cmp_by_vec(&x, &x));
         }
     }
 }
