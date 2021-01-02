@@ -20,7 +20,6 @@
 use crate::import::prelude::*;
 use crate::word::*;
 
-// TODO: Check everything in here is still tested
 fn add_should_not_overflow(a: u64, b: u64) -> u64 {
     debug_assert!(
         a.checked_add(b).is_some(),
@@ -122,7 +121,7 @@ impl<'a> Bits for LeadingBitsOf<&'a [Word]> {
 
 impl<'a> BitsMut for LeadingBitsOf<&'a mut [Word]> {
     fn replace(&mut self, idx: u64, with: bool) -> Option<bool> {
-        if idx >= self.borrow().len() {
+        if idx >= self.borrow_bits().len() {
             return None;
         }
         let r = self.all_bits.replace(idx, with);
@@ -131,7 +130,7 @@ impl<'a> BitsMut for LeadingBitsOf<&'a mut [Word]> {
     }
 
     fn set(&mut self, idx: u64, to: bool) {
-        if idx >= self.borrow().len() {
+        if idx >= self.borrow_bits().len() {
             panic!("Index is out of bounds for bits");
         }
         self.all_bits.set(idx, to);
@@ -147,7 +146,7 @@ impl BitsVec for LeadingBitsOf<Vec<Word>> {
                 .push(if bit { Word::msb() } else { Word::zeros() });
             self.skip_trailing_bits = Word::len() as u8 - 1;
         } else {
-            let current_len = self.borrow().len();
+            let current_len = self.borrow_bits().len();
             let prev_bit = self
                 .all_bits
                 .replace(current_len, bit)
@@ -564,11 +563,11 @@ impl<'a> Ord for BitsRef<'a> {
 
 impl<'a> PartialEq for BitsRefMut<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.borrow().eq(&other.borrow())
+        self.borrow_bits().eq(&other.borrow_bits())
     }
 
     fn ne(&self, other: &Self) -> bool {
-        self.borrow().ne(&other.borrow())
+        self.borrow_bits().ne(&other.borrow_bits())
     }
 }
 
@@ -576,40 +575,40 @@ impl<'a> Eq for BitsRefMut<'a> {}
 
 impl<'a> PartialOrd for BitsRefMut<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.borrow().partial_cmp(&other.borrow())
+        self.borrow_bits().partial_cmp(&other.borrow_bits())
     }
 
     fn lt(&self, other: &Self) -> bool {
-        self.borrow().lt(&other.borrow())
+        self.borrow_bits().lt(&other.borrow_bits())
     }
 
     fn le(&self, other: &Self) -> bool {
-        self.borrow().le(&other.borrow())
+        self.borrow_bits().le(&other.borrow_bits())
     }
 
     fn gt(&self, other: &Self) -> bool {
-        self.borrow().gt(&other.borrow())
+        self.borrow_bits().gt(&other.borrow_bits())
     }
 
     fn ge(&self, other: &Self) -> bool {
-        self.borrow().ge(&other.borrow())
+        self.borrow_bits().ge(&other.borrow_bits())
     }
 }
 
 impl<'a> Ord for BitsRefMut<'a> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.borrow().cmp(&other.borrow())
+        self.borrow_bits().cmp(&other.borrow_bits())
     }
 }
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl PartialEq for BitsOf<Vec<Word>> {
     fn eq(&self, other: &Self) -> bool {
-        self.borrow().eq(&other.borrow())
+        self.borrow_bits().eq(&other.borrow_bits())
     }
 
     fn ne(&self, other: &Self) -> bool {
-        self.borrow().eq(&other.borrow())
+        self.borrow_bits().eq(&other.borrow_bits())
     }
 }
 
@@ -619,35 +618,43 @@ impl Eq for BitsOf<Vec<Word>> {}
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl PartialOrd for BitsOf<Vec<Word>> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.borrow().partial_cmp(&other.borrow())
+        self.borrow_bits().partial_cmp(&other.borrow_bits())
     }
 
     fn lt(&self, other: &Self) -> bool {
-        self.borrow().lt(&other.borrow())
+        self.borrow_bits().lt(&other.borrow_bits())
     }
 
     fn le(&self, other: &Self) -> bool {
-        self.borrow().le(&other.borrow())
+        self.borrow_bits().le(&other.borrow_bits())
     }
 
     fn gt(&self, other: &Self) -> bool {
-        self.borrow().gt(&other.borrow())
+        self.borrow_bits().gt(&other.borrow_bits())
     }
 
     fn ge(&self, other: &Self) -> bool {
-        self.borrow().ge(&other.borrow())
+        self.borrow_bits().ge(&other.borrow_bits())
     }
 }
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl Ord for BitsOf<Vec<Word>> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.borrow().cmp(&other.borrow())
+        self.borrow_bits().cmp(&other.borrow_bits())
     }
 }
 
+pub trait BorrowBits {
+    fn borrow_bits(&self) -> BitsRef;
+}
+
+pub trait BorrowBitsMut {
+    fn borrow_bits_mut(&self) -> BitsRefMut;
+}
+
 impl<T: crate::import::Borrow<[Word]>> LeadingBitsOf<T> {
-    fn borrow(&self) -> LeadingBitsOf<&[Word]> {
+    fn borrow_bits(&self) -> LeadingBitsOf<&[Word]> {
         let LeadingBitsOf {
             all_bits,
             skip_trailing_bits,
@@ -661,15 +668,15 @@ impl<T: crate::import::Borrow<[Word]>> LeadingBitsOf<T> {
     }
 }
 
-impl<T: crate::import::Borrow<[Word]>> BitsOf<T> {
-    pub fn borrow(&self) -> BitsRef {
+impl<T: crate::import::Borrow<[Word]>> BorrowBits for BitsOf<T> {
+    fn borrow_bits(&self) -> BitsRef {
         let BitsOf {
             leading_bits,
             skip_leading_bits,
             skipped_leading_bits_count_ones,
         } = self;
         BitsOf {
-            leading_bits: leading_bits.borrow(),
+            leading_bits: leading_bits.borrow_bits(),
             skip_leading_bits: *skip_leading_bits,
             skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones,
         }
@@ -677,7 +684,7 @@ impl<T: crate::import::Borrow<[Word]>> BitsOf<T> {
 }
 
 impl<T: crate::import::BorrowMut<[Word]>> LeadingBitsOf<T> {
-    fn borrow_mut(&mut self) -> LeadingBitsOf<&mut [Word]> {
+    fn borrow_bits_mut(&mut self) -> LeadingBitsOf<&mut [Word]> {
         let LeadingBitsOf {
             all_bits,
             skip_trailing_bits,
@@ -691,15 +698,15 @@ impl<T: crate::import::BorrowMut<[Word]>> LeadingBitsOf<T> {
     }
 }
 
-impl<T: crate::import::BorrowMut<[Word]>> BitsOf<T> {
-    pub fn borrow_mut(&mut self) -> BitsRefMut {
+impl<T: crate::import::BorrowMut<[Word]>> BorrowBitsMut for BitsOf<T> {
+    fn borrow_bits_mut(&mut self) -> BitsRefMut {
         let BitsOf {
             leading_bits,
             skip_leading_bits,
             skipped_leading_bits_count_ones,
         } = self;
         BitsOf {
-            leading_bits: leading_bits.borrow_mut(),
+            leading_bits: leading_bits.borrow_bits_mut(),
             skip_leading_bits: *skip_leading_bits,
             skipped_leading_bits_count_ones: *skipped_leading_bits_count_ones,
         }
@@ -762,81 +769,81 @@ impl<'a> crate::import::iter::ExactSizeIterator for ChunksIter<'a> {
 
 impl<'a> Bits for BitsRefMut<'a> {
     fn len(&self) -> u64 {
-        self.borrow().len()
+        self.borrow_bits().len()
     }
 
     fn get(&self, idx: u64) -> Option<bool> {
-        self.borrow().get(idx)
+        self.borrow_bits().get(idx)
     }
 
     fn count_ones(&self) -> u64 {
-        self.borrow().count_ones()
+        self.borrow_bits().count_ones()
     }
 
     fn count_zeros(&self) -> u64 {
-        self.borrow().count_zeros()
+        self.borrow_bits().count_zeros()
     }
 
     fn rank_ones(&self, idx: u64) -> Option<u64> {
-        self.borrow().rank_ones(idx)
+        self.borrow_bits().rank_ones(idx)
     }
 
     fn rank_zeros(&self, idx: u64) -> Option<u64> {
-        self.borrow().rank_zeros(idx)
+        self.borrow_bits().rank_zeros(idx)
     }
 
     fn select_ones(&self, target_rank: u64) -> Option<u64> {
-        self.borrow().select_ones(target_rank)
+        self.borrow_bits().select_ones(target_rank)
     }
 
     fn select_zeros(&self, target_rank: u64) -> Option<u64> {
-        self.borrow().select_zeros(target_rank)
+        self.borrow_bits().select_zeros(target_rank)
     }
 }
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl Bits for BitsOf<Vec<Word>> {
     fn len(&self) -> u64 {
-        self.borrow().len()
+        self.borrow_bits().len()
     }
 
     fn get(&self, idx: u64) -> Option<bool> {
-        self.borrow().get(idx)
+        self.borrow_bits().get(idx)
     }
 
     fn count_ones(&self) -> u64 {
-        self.borrow().count_ones()
+        self.borrow_bits().count_ones()
     }
 
     fn count_zeros(&self) -> u64 {
-        self.borrow().count_zeros()
+        self.borrow_bits().count_zeros()
     }
 
     fn rank_ones(&self, idx: u64) -> Option<u64> {
-        self.borrow().rank_ones(idx)
+        self.borrow_bits().rank_ones(idx)
     }
 
     fn rank_zeros(&self, idx: u64) -> Option<u64> {
-        self.borrow().rank_zeros(idx)
+        self.borrow_bits().rank_zeros(idx)
     }
 
     fn select_ones(&self, target_rank: u64) -> Option<u64> {
-        self.borrow().select_ones(target_rank)
+        self.borrow_bits().select_ones(target_rank)
     }
 
     fn select_zeros(&self, target_rank: u64) -> Option<u64> {
-        self.borrow().select_zeros(target_rank)
+        self.borrow_bits().select_zeros(target_rank)
     }
 }
 
 #[cfg(any(test, feature = "std", feature = "alloc"))]
 impl BitsMut for BitsOf<Vec<Word>> {
     fn replace(&mut self, idx: u64, with: bool) -> Option<bool> {
-        self.borrow_mut().replace(idx, with)
+        self.borrow_bits_mut().replace(idx, with)
     }
 
     fn set(&mut self, idx: u64, to: bool) {
-        self.borrow_mut().set(idx, to)
+        self.borrow_bits_mut().set(idx, to)
     }
 }
 

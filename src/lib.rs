@@ -41,6 +41,8 @@ mod import {
         pub use core::cmp::{max, min, Ordering};
         pub use core::mem::{align_of, replace, size_of, swap};
         pub use core::ops::Range;
+        pub use core::convert::{From, TryFrom, TryInto};
+        pub use core::fmt::Display;
 
         #[inline]
         pub const fn ceil_div_u64(n: u64, d: u64) -> u64 {
@@ -56,6 +58,9 @@ mod import {
         pub use alloc::boxed::Box;
         #[cfg(any(test, feature = "std"))]
         pub use std::boxed::Box;
+
+        #[cfg(any(test, feature = "std"))]
+        pub use std::error::Error;
     }
 
     pub use core::borrow::{Borrow, BorrowMut};

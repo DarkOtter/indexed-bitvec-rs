@@ -15,11 +15,13 @@
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-use crate::bits::BitsRef;
+use crate::bits::{BitsRef, BitsOf, BorrowBits};
 use crate::bits_traits::{OneBits, OnesOrZeros, ZeroBits};
 use crate::import::prelude::*;
+use crate::Word;
 
 // TODO: Setup/check testing
+
 
 mod size {
     use super::*;
@@ -42,6 +44,7 @@ mod size {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::word::Word;
 
         #[test]
         fn bytes_evenly_divide_block_sizes() {
@@ -49,6 +52,14 @@ mod size {
             assert_eq!(BITS_PER_L1_BLOCK % 8, 0);
             assert_eq!(BITS_PER_L2_BLOCK % 8, 0);
         }
+
+        #[test]
+        fn words_evenly_divide_block_sizes() {
+            assert_eq!(BITS_PER_L0_BLOCK % Word::len(), 0);
+            assert_eq!(BITS_PER_L1_BLOCK % Word::len(), 0);
+            assert_eq!(BITS_PER_L2_BLOCK % Word::len(), 0);
+        }
+
         #[test]
         fn block_sizes_evenly_divide() {
             assert_eq!(BITS_PER_L0_BLOCK % BITS_PER_L1_BLOCK, 0);
@@ -71,7 +82,7 @@ impl IndexSize {
         }
     }
 
-    pub fn for_bits(bits: BitsRef) -> Self {
+    pub fn for_bits<B: Bits + ?Sized>(bits: &B) -> Self {
         Self::for_n_bits(bits.len())
     }
 
@@ -88,18 +99,48 @@ impl IndexSize {
 #[repr(transparent)]
 pub struct L0Entry(u64);
 
+#[allow(non_snake_case)]
+#[test]
+fn representation_L0Entry() {
+    use core::mem::{size_of_val,align_of_val};
+    let expect: u64 = 0;
+    let actual = L0Entry::default();
+    assert_eq!(size_of_val(&expect), size_of_val(&actual));
+    assert_eq!(align_of_val(&expect), align_of_val(&actual));
+}
+
 #[derive(Copy, Clone, Debug)]
+#[repr(align(8))]
 pub struct L1L2Entry {
     l1_rank: u32,
     l2_entries: PackedL2Entries,
+}
+
+#[allow(non_snake_case)]
+#[test]
+fn representation_L1L2Entry() {
+    use core::mem::{size_of_val,align_of_val};
+    let expect: u64 = 0;
+    let actual = L1L2Entry::default();
+    assert_eq!(size_of_val(&expect), size_of_val(&actual));
+    assert_eq!(align_of_val(&expect), align_of_val(&actual));
 }
 
 #[derive(Copy, Clone, Debug)]
 #[repr(transparent)]
 struct PackedL2Entries(u32);
 
-#[derive(Copy, Clone, Debug)]
-#[repr(transparent)]
+#[allow(non_snake_case)]
+#[test]
+fn representation_PackedL2Entries() {
+    use core::mem::{size_of_val,align_of_val};
+    let expect: u32 = 0;
+    let actual = PackedL2Entries::default();
+    assert_eq!(size_of_val(&expect), size_of_val(&actual));
+    assert_eq!(align_of_val(&expect), align_of_val(&actual));
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct L2Entries([u32; 3]);
 
 impl L0Entry {
@@ -135,8 +176,29 @@ impl Default for PackedL2Entries {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+enum PackL2EntriesError {
+    EntryOutOfRangeAt(usize),
+}
+
+impl Display for PackL2EntriesError {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        use PackL2EntriesError::*;
+        match *self {
+            EntryOutOfRangeAt(idx) => {
+                write!(f, "L2 entry at index {} was out of range", idx)
+            },
+        }
+    }
+}
+
+#[cfg(any(test, feature = "std"))]
+impl Error for PackL2EntriesError {
+}
+
 impl PackedL2Entries {
-    fn pack(items: L2Entries) -> Option<Self> {
+
+    fn pack(items: L2Entries) -> Result<Self, PackL2EntriesError> {
         #[inline(always)]
         const fn lossless_low_bits(i: u32, n_bits: u32) -> Option<u32> {
             if n_bits as usize >= size_of::<u32>() * 8 {
@@ -151,14 +213,23 @@ impl PackedL2Entries {
             }
         }
 
+        #[inline(always)]
+        fn lossless_low_bits_at(i: u32, n_bits: u32, idx: usize) -> Result<u32, PackL2EntriesError> {
+            lossless_low_bits(i, n_bits).ok_or(PackL2EntriesError::EntryOutOfRangeAt(idx))
+        }
+
         let L2Entries([a, b, c]) = items;
-        let a = lossless_low_bits(a, 10)?;
-        let b = lossless_low_bits(b, 11)?;
-        let c = lossless_low_bits(c, 11)?;
-        Some(PackedL2Entries((a << 22) | (b << 11) | (c << 0)))
+        let a = lossless_low_bits_at(a, 10, 0)?;
+        let b = lossless_low_bits_at(b, 11, 1)?;
+        let c = lossless_low_bits_at(c, 11, 2)?;
+        Ok(PackedL2Entries((a << 22) | (b << 11) | (c << 0)))
     }
 
-    fn unpack(self) -> L2Entries {
+    fn unpack_at(self, idx: usize) -> Option<u32> {
+        if idx > 2 {
+            return None;
+        }
+
         #[inline(always)]
         const fn lossy_low_bits(i: u32, n_bits: u32) -> u32 {
             if n_bits as usize >= size_of::<u32>() * 8 {
@@ -169,10 +240,29 @@ impl PackedL2Entries {
             }
         }
 
-        let a = lossy_low_bits(self.0 >> 22, 10);
-        let b = lossy_low_bits(self.0 >> 11, 11);
-        let c = lossy_low_bits(self.0 >> 0, 11);
+        let n_bits = if idx == 0 { 10 } else { 11 };
+        Some(lossy_low_bits(self.0 >> ((2 - idx) * 11), n_bits))
+    }
+
+    fn unpack(self) -> L2Entries {
+        let a = self.unpack_at(0).expect("This is definitely in range");
+        let b = self.unpack_at(1).expect("This is definitely in range");
+        let c = self.unpack_at(2).expect("This is definitely in range");
         L2Entries([a, b, c])
+    }
+}
+
+impl From<PackedL2Entries> for L2Entries {
+    fn from(packed: PackedL2Entries) -> Self {
+        packed.unpack()
+    }
+}
+
+impl TryFrom<L2Entries> for PackedL2Entries {
+    type Error = PackL2EntriesError;
+
+    fn try_from(unpacked: L2Entries) -> Result<Self, Self::Error> {
+        PackedL2Entries::pack(unpacked)
     }
 }
 
@@ -182,27 +272,36 @@ impl L1L2Entry {
             return None;
         }
         debug_assert!(bits.len() <= 4 * size::BITS_PER_L2_BLOCK);
-        let mut l2_block_counts = [0u64; 4];
+        let mut l2_block_counts = [0u32; 4];
         let chunks = bits
             .chunks(size::BITS_PER_L2_BLOCK)
             .expect("Size should not be zero");
         debug_assert!(chunks.len() <= l2_block_counts.len());
         chunks
             .zip(l2_block_counts.iter_mut())
-            .for_each(|(block, count_ones)| *count_ones = block.count_ones());
-        l2_block_counts[1] += l2_block_counts[0];
-        l2_block_counts[2] += l2_block_counts[1];
-        l2_block_counts[3] += l2_block_counts[2];
-        debug_assert!(l2_block_counts
-            .iter()
-            .all(|&x| x <= u32::max_value() as u64));
+            .for_each(|(block, write_count)| {
+                let count_ones = block.count_ones();
+                debug_assert!(count_ones < u32::max_value() as u64);
+                *write_count = count_ones as u32
+            });
+
+        #[inline(always)]
+        fn add_should_not_overflow(a: u32, b:u32) -> u32 {
+            debug_assert!(a.checked_add(b).is_some());
+            a.wrapping_add(b)
+        }
+
+        l2_block_counts[1] = add_should_not_overflow(l2_block_counts[0], l2_block_counts[1]);
+        l2_block_counts[2] = add_should_not_overflow(l2_block_counts[1], l2_block_counts[2]);
+        l2_block_counts[3] = add_should_not_overflow(l2_block_counts[2], l2_block_counts[3]);
+
         Some(L1L2Entry {
-            l1_rank: l2_block_counts[3] as u32,
-            l2_entries: PackedL2Entries::pack(L2Entries([
-                l2_block_counts[0] as u32,
-                l2_block_counts[1] as u32,
-                l2_block_counts[2] as u32,
-            ]))?,
+            l1_rank: l2_block_counts[3],
+            l2_entries: L2Entries([
+                l2_block_counts[0],
+                l2_block_counts[1],
+                l2_block_counts[2],
+            ]).try_into().expect("We checked the length, so it shouldn't be possible that an index is out of range"),
         })
     }
 
@@ -211,7 +310,7 @@ impl L1L2Entry {
             return None;
         }
         let l2_rank = if l2_idx > 0 {
-            self.l2_entries.unpack().0[l2_idx as usize - 1]
+            self.l2_entries.unpack_at((l2_idx - 1) as usize).expect("Already bounds checked")
         } else {
             0
         };
@@ -227,12 +326,38 @@ pub struct IndexStorage<Upper, Lower> {
 
 pub type IndexRef<'a> = IndexStorage<&'a [L0Entry], &'a [L1L2Entry]>;
 
+pub trait BorrowIndex {
+    fn borrow_index(&self) -> IndexRef;
+}
+
+impl<Upper: crate::import::Borrow<[L0Entry]>, Lower: crate::import::Borrow<[L1L2Entry]>> BorrowIndex for IndexStorage<Upper, Lower> {
+    fn borrow_index(&self) -> IndexRef {
+        IndexStorage {
+            l0: self.l0.borrow(),
+            l1l2: self.l1l2.borrow(),
+        }
+    }
+}
+
 pub struct IndexedBits<Bits, Index> {
     index: Index,
     data: Bits,
 }
 
 pub type IndexedBitsRef<'a> = IndexedBits<BitsRef<'a>, IndexRef<'a>>;
+
+pub trait BorrowIndexedBits {
+    fn borrow_indexed_bits(&self) -> IndexedBitsRef;
+}
+
+impl<Bits: BorrowBits, Index: BorrowIndex> BorrowIndexedBits for IndexedBits<Bits, Index> {
+    fn borrow_indexed_bits(&self) -> IndexedBitsRef {
+        IndexedBits { index: self.index.borrow_index(), data: self.data.borrow_bits()}
+    }
+}
+
+#[cfg(any(test, feature = "std", feature = "alloc"))]
+pub type IndexedBitsVec = IndexedBits<BitsOf<Vec<Word>>, IndexStorage<Vec<L0Entry>, Vec<L1L2Entry>>>;
 
 fn zip_eq<L, R>(left: L, right: R) -> crate::import::iter::Zip<L, R>
 where
@@ -518,6 +643,76 @@ mod tests {
     use super::*;
     use crate::bits::BitsOf;
     use crate::word::Word;
+    use crate::bits::tests::bits;
+    use proptest::prelude::*;
+
+    fn gen_l2_raw() -> impl Strategy<Value = [u32; 3]> {
+        assert!(size::BITS_PER_L2_BLOCK < u32::max_value() as u64);
+        let range = 0..=(size::BITS_PER_L2_BLOCK as u32);
+        let ranges = [range.clone(), range.clone(), range.clone()];
+        ranges.prop_map_into()
+    }
+
+    fn gen_l2() -> impl Strategy<Value = L2Entries> {
+        gen_l2_raw().prop_map(|counts| {
+            let [a, b, c] = counts;
+            L2Entries([a, a + b, a + b + c])
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn pack_unpack_l2_raw(entries in gen_l2_raw()) {
+            let entries = L2Entries(entries);
+            prop_assert_eq!(entries, PackedL2Entries::pack(entries).unwrap().unpack());
+        }
+
+        #[test]
+        fn pack_unpack_l2(entries in gen_l2()) {
+            prop_assert_eq!(entries, PackedL2Entries::pack(entries).unwrap().unpack());
+        }
+
+        #[test]
+        fn unpack_one_l2(u32 in any::<u32>()) {
+            let packed_entries = PackedL2Entries(u32);
+            let unpacked = packed_entries.unpack();
+            for i in 0..unpacked.0.len() {
+                prop_assert_eq!(Some(unpacked.0[i]), packed_entries.unpack_at(i));
+            }
+            prop_assert!(packed_entries.unpack_at(3).is_none());
+        }
+
+        #[test]
+        fn count_entry(bits in bits(0..=(size::BITS_PER_L1_BLOCK / Word::len()) as usize)) {
+            let bits = bits.borrow();
+            let entry = L1L2Entry::for_bits_with_count_as_l1rank(bits).unwrap();
+            let get_count = |idx: usize| entry.l2_entries.unpack_at(idx).unwrap_or(entry.l1_rank);
+            let mut total_count = 0;
+            let mut index_count = 0;
+
+            for (idx, chunk) in bits.chunks(size::BITS_PER_L2_BLOCK).unwrap().enumerate() {
+                total_count += chunk.count_ones();
+                index_count += 1;
+                prop_assert_eq!(total_count, get_count(idx) as u64);
+            }
+
+            for idx in index_count..size::L2_BLOCKS_PER_L1_BLOCK {
+                prop_assert_eq!(total_count, get_count(idx as usize) as u64);
+            }
+        }
+
+        #[test]
+        fn rank_entry(bits in bits(0..=(size::BITS_PER_L1_BLOCK / Word::len()) as usize)) {
+            let bits = bits.borrow();
+            let entry = L1L2Entry::for_bits_with_count_as_l1rank(bits).unwrap();
+            let entry = L1L2Entry { l1_rank: 0, ..entry };
+
+            for idx in 0..size::L2_BLOCKS_PER_L1_BLOCK {
+                let expected = bits.rank_ones(idx as u64 * size::BITS_PER_L2_BLOCK).or_else(|| Some(bits.count_ones()));
+                prop_assert_eq!(expected, entry.rank_at_l2_index(idx).map(u64::from));
+            }
+        }
+    }
 
     impl IndexSize {
         fn l0_vec(&self) -> Vec<L0Entry> {
@@ -547,7 +742,7 @@ mod tests {
         };
         let data = BitsOf::from(data.as_slice());
         let data = data.split_at(n_bits).unwrap().0;
-        let size = IndexSize::for_bits(data);
+        let size = IndexSize::for_bits(&data);
         let mut l0 = size.l0_vec();
         let mut l1l2 = size.l1l2_vec();
         let index = IndexedBits::from_bits(l0.as_mut_slice(), l1l2.as_mut_slice(), data).unwrap();
