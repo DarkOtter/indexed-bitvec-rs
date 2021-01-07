@@ -650,7 +650,7 @@ pub trait BorrowBits {
 }
 
 pub trait BorrowBitsMut {
-    fn borrow_bits_mut(&self) -> BitsRefMut;
+    fn borrow_bits_mut(&mut self) -> BitsRefMut;
 }
 
 impl<T: crate::import::Borrow<[Word]>> LeadingBitsOf<T> {
@@ -863,12 +863,12 @@ pub mod tests {
         words(n_words).prop_flat_map(|all_bits| {
             let ranges = {
                 let word_len = Word::len() as u8;
-                let range = if all_bits.len() == 1 {
-                    0..=word_len
+                if all_bits.len() == 1 {
+                    (0..=(word_len-1), 1..=word_len)
                 } else {
-                    0..=word_len - 1
-                };
-                (range.clone(), range)
+                    let r = 0..=(word_len - 1);
+                    (r.clone(), r)
+                }
             };
             (Just(all_bits), ranges).prop_map(|(all_bits, (mut a, mut b))| {
                 if all_bits.is_empty() {
@@ -878,10 +878,12 @@ pub mod tests {
                         if b < a {
                             swap(&mut a, &mut b)
                         }
-                        (a, b - a)
+                        (a, Word::len() as u8 - b)
                     } else {
                         (a, b)
                     };
+                    assert!((skip_leading_bits as u64) < Word::len());
+                    assert!((skip_trailing_bits as u64) < Word::len());
                     let first_word = *all_bits.first().expect("Is not empty");
                     let last_word = *all_bits.last().expect("Is not empty");
                     let leading_bits = LeadingBitsOf {
@@ -919,7 +921,7 @@ pub mod tests {
     proptest! {
         #[test]
         fn bits_bits_test_len(bits in bits(0..=1024)) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             prop_assert!(bits.leading_bits.len() <= bits_len(bits.leading_bits.all_bits));
             prop_assert!(bits.len() <= bits.leading_bits.len());
             prop_assert_eq!(bits.leading_bits.len() + bits.leading_bits.skip_trailing_bits as u64, bits_len(bits.leading_bits.all_bits));
@@ -928,7 +930,7 @@ pub mod tests {
 
         #[test]
         fn bits_bits_test_get(bits in some_bits()) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             let leading = bits.leading_bits;
             for i in 0..leading.len() {
                 prop_assert!(leading.get(i).is_some());
@@ -945,43 +947,43 @@ pub mod tests {
 
         #[test]
         fn bits_bits_test_count(bits in some_bits()) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             bits_tests::from_get_and_len::test_count(&bits);
         }
 
         #[test]
         fn bits_bits_test_rank(bits in some_bits()) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             bits_tests::from_get_and_len::test_rank(&bits);
         }
 
         #[test]
         fn bits_bits_test_select(bits in some_bits()) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             bits_tests::from_get_and_len::test_select(&bits);
         }
 
         #[test]
         fn bits_bits_mut_test_replace(mut bits in some_bits()) {
-            let mut bits = bits.borrow_mut();
+            let mut bits = bits.borrow_bits_mut();
             bits_tests::from_get_and_len::test_replace(&mut bits);
         }
 
         #[test]
         fn bits_bits_mut_test_set(mut bits in some_bits()) {
-            let mut bits = bits.borrow_mut();
+            let mut bits = bits.borrow_bits_mut();
             bits_tests::from_get_and_len::test_set_in_bounds(&mut bits);
         }
 
         #[test]
         fn bits_bits_split_test_split_absent(bits in some_bits()) {
-            let bits: BitsRef = bits.borrow();
+            let bits: BitsRef = bits.borrow_bits();
             prop_assert!(bits.split_at(bits.len() + 1).is_none());
         }
 
         #[test]
         fn bits_bits_split_test_split_present((bits, split_at) in some_bits().prop_flat_map(|bits| { let len = bits.len(); (Just(bits), 0..=len)})) {
-            let bits: BitsRef = bits.borrow();
+            let bits: BitsRef = bits.borrow_bits();
             let split = bits.split_at(split_at);
             prop_assert!(split.is_some());
             let (left, right) = split.unwrap();
@@ -1037,7 +1039,7 @@ pub mod tests {
     proptest! {
         #[test]
         fn bits_chunks(bits in some_bits(), chunk_size in 1..=999999999u64) {
-            check_chunks(bits.borrow(), chunk_size);
+            check_chunks(bits.borrow_bits(), chunk_size);
         }
     }
 

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 12dddca333bfe686194dd546aa12744ec2bcb0f4a31842928c9417698fc07517 # shrinks to entries = L2Entries([0, 0, 1])
+cc edb600bc3bb718450cd7b806c3819be9014eca8304f834017fa929a8808202b7 # shrinks to entries = [0, 0, 1]
+cc 54b1f76385304ee00257820dd20932f3de192590650740b6f8c9cbf986ae852c # shrinks to entries = L2Entries([117, 544, 1024])

@@ -20,9 +20,6 @@ use crate::bits_traits::{OneBits, OnesOrZeros, ZeroBits};
 use crate::import::prelude::*;
 use crate::Word;
 
-// TODO: Setup/check testing
-
-
 mod size {
     use super::*;
 
@@ -388,17 +385,16 @@ fn build_index<'a, 'b>(
             *entry = L1L2Entry::for_bits_with_count_as_l1rank(data_part)
                 .expect("Counts must be in range or it's a bug");
         });
-        let mut running_total = 0u64;
+        let mut running_total = 0u32;
         l1l2_index_part.iter_mut().for_each(|entry| {
-            assert!(
-                running_total <= u32::max_value() as u64,
-                "Total rank within l1 should not exceed range of u32 or it's a bug"
-            );
             let part_total = entry.l1_rank;
-            entry.l1_rank = running_total as u32;
-            running_total += part_total as u64;
+            entry.l1_rank = running_total;
+            debug_assert!(running_total.checked_add(part_total).is_some(),
+            "Total rank within l1 block should not exceed the range of u32 or it's a bug"
+            );
+            running_total += part_total;
         });
-        running_total
+        running_total as u64
     }
 
     let total_bits = data.len();
@@ -638,6 +634,8 @@ impl<'a> IndexedBitsRef<'a> {
     }
 }
 
+// TODO: Support Bits, BitsMut, BitsVec
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,7 +682,7 @@ mod tests {
 
         #[test]
         fn count_entry(bits in bits(0..=(size::BITS_PER_L1_BLOCK / Word::len()) as usize)) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             let entry = L1L2Entry::for_bits_with_count_as_l1rank(bits).unwrap();
             let get_count = |idx: usize| entry.l2_entries.unpack_at(idx).unwrap_or(entry.l1_rank);
             let mut total_count = 0;
@@ -703,7 +701,7 @@ mod tests {
 
         #[test]
         fn rank_entry(bits in bits(0..=(size::BITS_PER_L1_BLOCK / Word::len()) as usize)) {
-            let bits = bits.borrow();
+            let bits = bits.borrow_bits();
             let entry = L1L2Entry::for_bits_with_count_as_l1rank(bits).unwrap();
             let entry = L1L2Entry { l1_rank: 0, ..entry };
 
@@ -731,6 +729,9 @@ mod tests {
     #[test]
     fn small_indexed_tests() {
         let n_bits: u64 = (1 << 19) - 1;
+        // Make sure we'll actually test a fair lot of the code paths
+        assert!(n_bits > size::BITS_PER_L2_BLOCK * 2);
+        // Unfortunately we can't really test with more than 2^32 bits by default
         let n_words: usize = ceil_div_u64(n_bits, Word::len()) as usize;
         use oorandom::Rand64;
         let mut rng = Rand64::new(427319723125543870550137410719523151);
