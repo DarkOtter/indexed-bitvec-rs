@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 15b3f764c1de384c7c1e947ad9cbbd78a9a1ecae05ef212f155a37de173680c3 # shrinks to (bits, split_at) = (BitsOf { leading_bits: LeadingBitsOf { all_bits: [], skip_trailing_bits: 0, skipped_trailing_bits_count_ones: 0 }, skip_leading_bits: 0, skipped_leading_bits_count_ones: 0 }, 0)
